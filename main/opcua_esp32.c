@@ -1,4 +1,5 @@
 #include "opcua_esp32.h"
+#include "model.h"
 
 #define EXAMPLE_ESP_MAXIMUM_RETRY 10
 
@@ -94,9 +95,10 @@ static void opcua_task(void *arg)
     UA_ServerConfig_setCustomHostname(config, hostName);
 
     /* Add Information Model Objects Here */
-    addCurrentTemperatureDataSourceVariable(server);
-    addRelay0ControlNode(server);
-    addRelay1ControlNode(server);
+    addDSTemperatureDataSourceVariable(server);
+    // addCurrentTemperatureDataSourceVariable(server);
+    // addRelay0ControlNode(server);
+    // addRelay1ControlNode(server);
 
     ESP_LOGI(TAG, "Heap Left : %d", xPortGetFreeHeapSize());
     UA_StatusCode retval = UA_Server_run_startup(server);
