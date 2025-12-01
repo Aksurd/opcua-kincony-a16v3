@@ -1,8 +1,11 @@
 #include "open62541.h"
 #include "model.h"
-//#include "DHT22.h"
 #include "driver/gpio.h"
 #include "ds18b20.h"
+#include "pcf8574.h"
+#include "esp_log.h"
+
+static const char *TAG = "model";
 
 /* DS18B20 Temperature */
 
@@ -41,229 +44,209 @@ addDSTemperatureDataSourceVariable(UA_Server *server) {
                                         timeDataSource, NULL, NULL);
 }
 
-//static void
-//configureGPIO();
+// =================== DISCRETE I/O FUNCTIONS ===================
 
-///* GPIO Configuration */
-//static void
-//configureGPIO(void) {
-    //gpio_set_direction(RELAY_0_GPIO, GPIO_MODE_INPUT_OUTPUT);
-    //gpio_set_direction(RELAY_1_GPIO, GPIO_MODE_INPUT_OUTPUT);
-//}
+// Дескрипторы устройств PCF8574
+static pcf8574_dev_t dio_in1, dio_in2, dio_out1, dio_out2;
+static uint16_t current_inputs = 0;
+static uint16_t current_outputs = 0;
+static bool dio_initialized = false;
 
-// /* LED Method */
+// Инициализация дискретных I/O
+void discrete_io_init(void) {
+    if (dio_initialized) {
+        return;
+    }
+    
+    // Конфигурация I2C
+    pcf8574_config_t i2c_config = {
+        .i2c_port = I2C_NUM_0,
+        .sda_pin = 9,
+        .scl_pin = 10,
+        .clk_speed = 400000
+    };
+    
+    if (!pcf8574_i2c_init(&i2c_config)) {
+        ESP_LOGE(TAG, "Failed to initialize I2C for discrete I/O");
+        return;
+    }
+    
+    // Инициализация устройств
+    pcf8574_init(&dio_in1, DIO_IN1_ADDR, I2C_NUM_0);
+    pcf8574_init(&dio_in2, DIO_IN2_ADDR, I2C_NUM_0);
+    pcf8574_init(&dio_out1, DIO_OUT1_ADDR, I2C_NUM_0);
+    pcf8574_init(&dio_out2, DIO_OUT2_ADDR, I2C_NUM_0);
+    
+    // Инициализация выходов в безопасное состояние (все выключены)
+    pcf8574_write(&dio_out1, 0xFF); // Все биты = 1 (выключено)
+    pcf8574_write(&dio_out2, 0xFF);
+    
+    dio_initialized = true;
+    ESP_LOGI(TAG, "Discrete I/O initialized");
+}
 
-// UA_StatusCode
-// ledProcessCallBack(UA_Server *server,
-//                    const UA_NodeId *sessionId, void *sessionHandle,
-//                    const UA_NodeId *methodId, void *methodContext,
-//                    const UA_NodeId *objectId, void *objectContext,
-//                    size_t inputSize, const UA_Variant *input,
-//                    size_t outputSize, UA_Variant *output)
-// {
-//     UA_Int32 i = 0;
-//     UA_Int32 *inputVal = (UA_Int32 *)input->data;
-//     UA_String tmp = UA_STRING_ALLOC("Data Received");
-//     if (*inputVal > 0)
-//     {
-//         tmp.data = (UA_Byte *)UA_realloc(tmp.data, tmp.length);
-//         while (i < *inputVal + 1)
-//         {
-//             gpio_pad_select_gpio(BLINK_GPIO);
-//             gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
-//             gpio_set_level(BLINK_GPIO, 1);
-//             vTaskDelay(500 / portTICK_PERIOD_MS);
-//             gpio_set_level(BLINK_GPIO, 0);
-//             vTaskDelay(500 / portTICK_PERIOD_MS);
-//             i++;
-//         }
-//     }
-//     UA_String_clear(&tmp);
-//     return UA_STATUSCODE_GOOD;
-// }
+// Чтение 16 дискретных входов
+uint16_t read_discrete_inputs(void) {
+    // Ленивая инициализация при первом вызове
+    if (!dio_initialized) {
+        ESP_LOGI(TAG, "First call to discrete I/O - initializing...");
+        discrete_io_init();
+        if (!dio_initialized) {
+            ESP_LOGE(TAG, "Failed to initialize discrete I/O");
+            return 0xFFFF;
+        }
+    }
+    
+    uint8_t in1 = pcf8574_read(&dio_in1);
+    uint8_t in2 = pcf8574_read(&dio_in2);
+    
+    // Инвертируем: PCF8574: 0=сигнал есть, 1=нет -> делаем 1=сигнал есть
+    in1 = ~in1;
+    in2 = ~in2;
+    
+    current_inputs = ((uint16_t)in2 << 8) | in1;
+    return current_inputs;
+}
 
-// void
-// addLEDMethod(UA_Server *server)
-// {
+// Запись 16 дискретных выходов
+void write_discrete_outputs(uint16_t outputs) {
+    // Ленивая инициализация при первом вызове
+    if (!dio_initialized) {
+        ESP_LOGI(TAG, "First call to discrete I/O - initializing...");
+        discrete_io_init();
+        if (!dio_initialized) {
+            ESP_LOGE(TAG, "Failed to initialize discrete I/O");
+            return;
+        }
+    }
+    
+    current_outputs = outputs;
+    
+    uint8_t out1 = outputs & 0xFF;
+    uint8_t out2 = (outputs >> 8) & 0xFF;
+    
+    // Инвертируем: 1 в бите = включить выход -> PCF8574: 0=включить
+    out1 = ~out1;
+    out2 = ~out2;
+    
+    pcf8574_write(&dio_out1, out1);
+    pcf8574_write(&dio_out2, out2);
+}
 
-//     UA_NodeId createdNodeId;
-//     UA_ObjectAttributes object_attr = UA_ObjectAttributes_default;
+// Чтение текущих выходов
+uint16_t get_current_outputs(void) {
+    // Ленивая инициализация при первом вызове
+    if (!dio_initialized) {
+        ESP_LOGI(TAG, "First call to discrete I/O - initializing...");
+        discrete_io_init();
+        if (!dio_initialized) {
+            ESP_LOGE(TAG, "Failed to initialize discrete I/O");
+            return 0xFFFF;
+        }
+    }
+    return current_outputs;
+}
 
-//     object_attr.description = UA_LOCALIZEDTEXT("en-US", "A pump!");
-//     object_attr.displayName = UA_LOCALIZEDTEXT("en-US", "Pump1");
+// =================== OPC UA FUNCTIONS FOR DISCRETE I/O ===================
 
-//     UA_Server_addObjectNode(server, UA_NODEID_NUMERIC(1, 0),
-//                             UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER),
-//                             UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES),
-//                             UA_QUALIFIEDNAME(1, "Pump1"),
-//                             UA_NODEID_NUMERIC(2, 1002),
-//                             object_attr, NULL, &createdNodeId);
+// Функция чтения дискретных входов для OPC UA
+UA_StatusCode
+readDiscreteInputs(UA_Server *server,
+                  const UA_NodeId *sessionId, void *sessionContext,
+                  const UA_NodeId *nodeId, void *nodeContext,
+                  UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
+                  UA_DataValue *dataValue) {
+    UA_UInt16 inputs = read_discrete_inputs();
+    UA_Variant_setScalarCopy(&dataValue->value, &inputs,
+                           &UA_TYPES[UA_TYPES_UINT16]);
+    dataValue->hasValue = true;
+    return UA_STATUSCODE_GOOD;
+}
 
-//     UA_Argument inputArgument;
-//     UA_Argument_init(&inputArgument);
-//     inputArgument.description = UA_LOCALIZEDTEXT("en-US", "Number of times to blink LED!");
-//     inputArgument.name = UA_STRING("Blink Count");
-//     inputArgument.dataType = UA_TYPES[UA_TYPES_INT32].typeId;
-//     inputArgument.valueRank = -1; /* scalar */
+// Функция чтения дискретных выходов для OPC UA
+UA_StatusCode
+readDiscreteOutputs(UA_Server *server,
+                   const UA_NodeId *sessionId, void *sessionContext,
+                   const UA_NodeId *nodeId, void *nodeContext,
+                   UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
+                   UA_DataValue *dataValue) {
+    UA_UInt16 outputs = get_current_outputs();
+    UA_Variant_setScalarCopy(&dataValue->value, &outputs,
+                           &UA_TYPES[UA_TYPES_UINT16]);
+    dataValue->hasValue = true;
+    return UA_STATUSCODE_GOOD;
+}
 
-//     /* And output argument for a void method is not logical, check here !!! */
-//     UA_Argument outputArgument;
-//     UA_Argument_init(&outputArgument);
-//     outputArgument.description = UA_LOCALIZEDTEXT("en-US", "LED Blinked");
-//     outputArgument.name = UA_STRING("Led Blink Method Output");
-//     outputArgument.dataType = UA_TYPES[UA_TYPES_STRING].typeId;
-//     outputArgument.valueRank = UA_VALUERANK_ONE_DIMENSION;
+// Функция записи дискретных выходов для OPC UA
+UA_StatusCode
+writeDiscreteOutputs(UA_Server *server,
+                    const UA_NodeId *sessionId, void *sessionContext,
+                    const UA_NodeId *nodeId, void *nodeContext,
+                    const UA_NumericRange *range, const UA_DataValue *data) {
+    if (data->hasValue && UA_Variant_isScalar(&data->value) &&
+        data->value.type == &UA_TYPES[UA_TYPES_UINT16]) {
+        UA_UInt16 outputs = *(UA_UInt16*)data->value.data;
+        write_discrete_outputs((uint16_t)outputs);
+        return UA_STATUSCODE_GOOD;
+    }
+    return UA_STATUSCODE_BADTYPEMISMATCH;
+}
 
-//     UA_MethodAttributes helloAttr = UA_MethodAttributes_default;
-//     helloAttr.description = UA_LOCALIZEDTEXT("en-US", "Enter the number of times you want LED to blin!");
-//     helloAttr.displayName = UA_LOCALIZEDTEXT("en-US", "Blink");
-//     helloAttr.executable = true;
-//     helloAttr.userExecutable = true;
-//     UA_Server_addMethodNode(server, UA_NODEID_NUMERIC(1, 62541),
-//                             UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER),
-//                             UA_NODEID_NUMERIC(0, UA_NS0ID_HASORDEREDCOMPONENT),
-//                             UA_QUALIFIEDNAME(1, "Blink"),
-//                             helloAttr, &ledProcessCallBack,
-//                             1, &inputArgument, 1, &outputArgument, NULL, &createdNodeId);
-// }
+// Добавление переменных дискретных I/O в OPC UA сервер
+void
+addDiscreteIOVariables(UA_Server *server) {
+    // 1. Переменная для ЧТЕНИЯ входов (только чтение)
+    UA_VariableAttributes inputAttr = UA_VariableAttributes_default;
+    inputAttr.displayName = UA_LOCALIZEDTEXT("en-US", "Discrete Inputs");
+    inputAttr.description = UA_LOCALIZEDTEXT("en-US", "16 discrete inputs (read-only)");
+    inputAttr.dataType = UA_TYPES[UA_TYPES_UINT16].typeId;
+    inputAttr.accessLevel = UA_ACCESSLEVELMASK_READ;
+    
+    UA_DataSource inputDataSource;
+    inputDataSource.read = readDiscreteInputs;
+    inputDataSource.write = NULL;
+    
+    UA_NodeId inputNodeId = UA_NODEID_STRING(1, "discrete_inputs");
+    UA_QualifiedName inputName = UA_QUALIFIEDNAME(1, "Discrete Inputs");
+    UA_NodeId parentNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
+    UA_NodeId parentReferenceNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES);
+    UA_NodeId variableTypeNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE);
+    
+    UA_Server_addDataSourceVariableNode(server, inputNodeId, parentNodeId,
+                                        parentReferenceNodeId, inputName,
+                                        variableTypeNodeId, inputAttr,
+                                        inputDataSource, NULL, NULL);
+    
+    // 2. Переменная для ВЫХОДОВ (чтение/запись)
+    UA_VariableAttributes outputAttr = UA_VariableAttributes_default;
+    outputAttr.displayName = UA_LOCALIZEDTEXT("en-US", "Discrete Outputs");
+    outputAttr.description = UA_LOCALIZEDTEXT("en-US", "16 discrete outputs (read/write)");
+    outputAttr.dataType = UA_TYPES[UA_TYPES_UINT16].typeId;
+    outputAttr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+    
+    UA_DataSource outputDataSource;
+    outputDataSource.read = readDiscreteOutputs;
+    outputDataSource.write = writeDiscreteOutputs;
+    
+    UA_NodeId outputNodeId = UA_NODEID_STRING(1, "discrete_outputs");
+    UA_QualifiedName outputName = UA_QUALIFIEDNAME(1, "Discrete Outputs");
+    
+    UA_Server_addDataSourceVariableNode(server, outputNodeId, parentNodeId,
+                                        parentReferenceNodeId, outputName,
+                                        variableTypeNodeId, outputAttr,
+                                        outputDataSource, NULL, NULL);
+    
+    ESP_LOGI(TAG, "Discrete I/O variables added to OPC UA server");
+}
 
+// =================== MAIN INIT FUNCTION ===================
 
-///* Temperature */
-
-//UA_StatusCode
-//readCurrentTemperature(UA_Server *server,
-                //const UA_NodeId *sessionId, void *sessionContext,
-                //const UA_NodeId *nodeId, void *nodeContext,
-                //UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
-                //UA_DataValue *dataValue) {
-    //UA_Float temperature = ReadTemperature(DHT22_GPIO);
-    //UA_Variant_setScalarCopy(&dataValue->value, &temperature,
-                             //&UA_TYPES[UA_TYPES_FLOAT]);
-    //dataValue->hasValue = true;
-    //return UA_STATUSCODE_GOOD;
-//}
-
-
-//void
-//addCurrentTemperatureDataSourceVariable(UA_Server *server) {
-    //UA_VariableAttributes attr = UA_VariableAttributes_default;
-    //attr.displayName = UA_LOCALIZEDTEXT("en-US", "Temperature");
-    //attr.dataType = UA_TYPES[UA_TYPES_FLOAT].typeId;
-    //attr.accessLevel = UA_ACCESSLEVELMASK_READ;
-
-    //UA_NodeId currentNodeId = UA_NODEID_STRING(1, "temperature");
-    //UA_QualifiedName currentName = UA_QUALIFIEDNAME(1, "Ambient Temperature");
-    //UA_NodeId parentNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
-    //UA_NodeId parentReferenceNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES);
-    //UA_NodeId variableTypeNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE);
-
-    //UA_DataSource timeDataSource;
-    //timeDataSource.read = readCurrentTemperature;
-    //UA_Server_addDataSourceVariableNode(server, currentNodeId, parentNodeId,
-                                        //parentReferenceNodeId, currentName,
-                                        //variableTypeNodeId, attr,
-                                        //timeDataSource, NULL, NULL);
-//}
-
-
-///* Relay 0 */
-
-//UA_StatusCode
-//readRelay0State(UA_Server *server,
-                //const UA_NodeId *sessionId, void *sessionContext,
-                //const UA_NodeId *nodeId, void *nodeContext,
-                //UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
-                //UA_DataValue *dataValue) {
-    //UA_Boolean relay0_State = gpio_get_level(RELAY_0_GPIO);
-    //UA_Variant_setScalarCopy(&dataValue->value, &relay0_State,
-                             //&UA_TYPES[UA_TYPES_BOOLEAN]);
-    //dataValue->hasValue = true;
-    //return UA_STATUSCODE_GOOD;
-//}
-
-//UA_StatusCode
-//setRelay0State(UA_Server *server,
-                  //const UA_NodeId *sessionId, void *sessionContext,
-                  //const UA_NodeId *nodeId, void *nodeContext,
-                 //const UA_NumericRange *range, const UA_DataValue *data) {
-    //UA_Boolean currentState = gpio_get_level(RELAY_0_GPIO);
-    //int level = currentState == true ? 0:1;
-    //gpio_set_level(RELAY_0_GPIO, level);
-    //UA_Boolean relay0_state_after_write = gpio_get_level(RELAY_0_GPIO);
-    //UA_StatusCode status = relay0_state_after_write == level ? UA_STATUSCODE_GOOD : UA_STATUSCODE_BADINTERNALERROR;
-    //return status;
-//}
-
-//void
-//addRelay0ControlNode(UA_Server *server) {
-    //UA_VariableAttributes attr = UA_VariableAttributes_default;
-    //attr.displayName = UA_LOCALIZEDTEXT("en-US", "Relay0");
-    //attr.dataType = UA_TYPES[UA_TYPES_BOOLEAN].typeId;
-    //attr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
-
-    //UA_NodeId currentNodeId = UA_NODEID_STRING(1, "Control Relay number 0.");
-    //UA_QualifiedName currentName = UA_QUALIFIEDNAME(1, "Control Relay number 0.");
-    //UA_NodeId parentNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
-    //UA_NodeId parentReferenceNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES);
-    //UA_NodeId variableTypeNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE);
-
-    //UA_DataSource relay0;
-    ////Configure GPIOs just before adding relay 0 - not a good practice.
-    //configureGPIO();
-    //relay0.read = readRelay0State;
-    //relay0.write = setRelay0State;
-    //UA_Server_addDataSourceVariableNode(server, currentNodeId, parentNodeId,
-                                        //parentReferenceNodeId, currentName,
-                                        //variableTypeNodeId, attr,
-                                        //relay0, NULL, NULL);
-//}
-
-///* Relay 1 */
-
-//UA_StatusCode
-//readRelay1State(UA_Server *server,
-                //const UA_NodeId *sessionId, void *sessionContext,
-                //const UA_NodeId *nodeId, void *nodeContext,
-                //UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
-                //UA_DataValue *dataValue) {
-    //UA_Boolean relay1_State = gpio_get_level(RELAY_1_GPIO);
-    //UA_Variant_setScalarCopy(&dataValue->value, &relay1_State,
-                             //&UA_TYPES[UA_TYPES_BOOLEAN]);
-    //dataValue->hasValue = true;
-    //return UA_STATUSCODE_GOOD;
-//}
-
-//UA_StatusCode
-//setRelay1State(UA_Server *server,
-                  //const UA_NodeId *sessionId, void *sessionContext,
-                  //const UA_NodeId *nodeId, void *nodeContext,
-                 //const UA_NumericRange *range, const UA_DataValue *data) {
-    //UA_Boolean currentState = gpio_get_level(RELAY_1_GPIO);
-    //int level = currentState == true ? 0:1;
-    //gpio_set_level(RELAY_1_GPIO, level);
-    //UA_Boolean relay1_state_after_write = gpio_get_level(RELAY_1_GPIO);
-    //UA_StatusCode status = relay1_state_after_write == level ? UA_STATUSCODE_GOOD : UA_STATUSCODE_BADINTERNALERROR;
-    //return status;
-//}
-
-//void
-//addRelay1ControlNode(UA_Server *server) {
-    //UA_VariableAttributes attr = UA_VariableAttributes_default;
-    //attr.displayName = UA_LOCALIZEDTEXT("en-US", "Relay1");
-    //attr.dataType = UA_TYPES[UA_TYPES_BOOLEAN].typeId;
-    //attr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
-
-    //UA_NodeId currentNodeId = UA_NODEID_STRING(1, "Control Relay number 1.");
-    //UA_QualifiedName currentName = UA_QUALIFIEDNAME(1, "Control Relay number 1.");
-    //UA_NodeId parentNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
-    //UA_NodeId parentReferenceNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES);
-    //UA_NodeId variableTypeNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE);
-
-    //UA_DataSource relay1;
-    //relay1.read = readRelay1State;
-    //relay1.write = setRelay1State;
-    //UA_Server_addDataSourceVariableNode(server, currentNodeId, parentNodeId,
-                                        //parentReferenceNodeId, currentName,
-                                        //variableTypeNodeId, attr,
-                                        //relay1, NULL, NULL);
-//}
+void model_init_task(void) {
+    // Инициализация дискретных I/O
+    discrete_io_init();
+    
+    // Инициализация DS18B20
+    ds18b20_init_task();
+    
+    ESP_LOGI(TAG, "Model initialized with DS18B20 and Discrete I/O");
+}

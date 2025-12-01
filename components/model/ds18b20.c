@@ -13,6 +13,7 @@
 static const char* TAG = "DS18B20";
 
 float ds_temperature = 0.;
+static int error_count = 0;  // Счетчик последовательных ошибок
 
 // == get temperature ============================================
 
@@ -133,6 +134,7 @@ int readDS18B20()
     
     if (!ds18b20_reset()) {
         ESP_LOGE(TAG, "DS18B20 device not found - no presence pulse");
+        error_count++;  // Увеличиваем счетчик ошибок
         return DS18B20_DEVICE_NOT_FOUND;
     }
     
@@ -150,6 +152,7 @@ int readDS18B20()
     
     if (!ds18b20_reset()) {
         ESP_LOGE(TAG, "DS18B20 device not found after conversion");
+        error_count++;  // Увеличиваем счетчик ошибок
         return DS18B20_DEVICE_NOT_FOUND;
     }
     
@@ -174,8 +177,12 @@ int readDS18B20()
     if (crc != scratchpad[8]) {
         ESP_LOGE(TAG, "CRC error: calculated=0x%02x, received=0x%02x", 
                 crc, scratchpad[8]);
+        error_count++;  // Увеличиваем счетчик ошибок
         return DS18B20_CRC_ERROR;
     }
+    
+    // Если дошли сюда - успешное чтение!
+    error_count = 0;  // Сбрасываем счетчик ошибок
     
     ESP_LOGI(TAG, "CRC OK: 0x%02x", crc);
     
@@ -196,8 +203,17 @@ float ReadDSTemperature(int gpio){
     int ret = readDS18B20();
     
     if (ret != DS18B20_OK){
-        ESP_LOGE(TAG, "DS18B20 read error: %d", ret);
-        return -1000; // Sensor ERROR
+        ESP_LOGE(TAG, "DS18B20 read error: %d, error_count: %d", ret, error_count);
+        
+        // Если 3 ошибки подряд - возвращаем -1000
+        if (error_count >= 3) {
+            ESP_LOGE(TAG, "3 consecutive errors - returning -1000");
+            return -1000.0;
+        }
+        else {
+            // Возвращаем последнее успешное значение
+            return getDSTemperature();
+        }
     }
     else {
         temperatureFromSensor = getDSTemperature();

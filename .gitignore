@@ -1,7 +1,15 @@
-#Ignore build files
-/build
-/.vscode
-sdkconfig
+# Build directories
+build/
+main/build/
+
+# IDE files
+.cproject
+.project
+*.geany
+
+# SDK config backups
 sdkconfig.old
-.vscode
-.settings
+
+# Old/backup files
+*_old.c
+*_old.h

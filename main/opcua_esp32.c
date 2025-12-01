@@ -99,6 +99,7 @@ static void opcua_task(void *arg)
     // addCurrentTemperatureDataSourceVariable(server);
     // addRelay0ControlNode(server);
     // addRelay1ControlNode(server);
+    addDiscreteIOVariables(server);
 
     ESP_LOGI(TAG, "Heap Left : %d", xPortGetFreeHeapSize());
     UA_StatusCode retval = UA_Server_run_startup(server);
