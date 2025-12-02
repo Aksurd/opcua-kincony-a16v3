@@ -1,14 +1,9 @@
+#ifndef MODEL_H
+#define MODEL_H
+
 #include "open62541.h"
 
 /* GPIO Numbers */
-// #define BLINK_GPIO 2
-//#define DHT22_GPIO 4
-//#define RELAY_0_GPIO 32
-//#define RELAY_1_GPIO 33
-// #define RELAY_2_GPIO 26
-// #define RELAY_3_GPIO 27
-
-/* DS18B20 Temperature */
 #define DS18B20_GPIO 47
 
 /* PCF8574 Addresses for KC868-A16v3 */
@@ -63,17 +58,39 @@ writeDiscreteOutputs(UA_Server *server,
 void addDiscreteIOVariables(UA_Server *server);
 void model_init_task(void);
 
-// Функции с временными метками для OPC UA
-uint16_t read_discrete_inputs_with_timestamps(uint64_t *source_ts, uint64_t *server_ts);
-uint16_t read_discrete_outputs_with_timestamps(uint64_t *source_ts, uint64_t *server_ts);
-float read_temperature_with_timestamps(uint64_t *source_ts, uint64_t *server_ts);
-
-// Функции с временными метками для OPC UA
-uint16_t read_discrete_inputs_with_timestamps(uint64_t *source_ts, uint64_t *server_ts);
-uint16_t read_discrete_outputs_with_timestamps(uint64_t *source_ts, uint64_t *server_ts);
-float read_temperature_with_timestamps(uint64_t *source_ts, uint64_t *server_ts);
-
-/* ===== БЫСТРЫЕ ФУНКЦИИ ===== */
+/* ===== БЫСТРЫЕ ФУНКЦИИ ДЛЯ OPC UA (работают с кэшем) ===== */
 uint16_t read_discrete_inputs_fast(void);
 uint16_t read_discrete_outputs_fast(void);
 float read_temperature_fast(void);
+
+/* ===== ДИАГНОСТИЧЕСКИЕ ТЕГИ ДЛЯ ИЗМЕРЕНИЯ ПРОИЗВОДИТЕЛЬНОСТИ ===== */
+uint16_t get_diagnostic_counter(void);
+uint16_t get_loopback_input(void);
+void set_loopback_input(uint16_t val);
+uint16_t get_loopback_output(void);
+
+/* ===== ДИАГНОСТИЧЕСКИЕ OPC UA ФУНКЦИИ ===== */
+UA_StatusCode readDiagnosticCounter(UA_Server *server,
+                                   const UA_NodeId *sessionId, void *sessionContext,
+                                   const UA_NodeId *nodeId, void *nodeContext,
+                                   UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
+                                   UA_DataValue *dataValue);
+
+UA_StatusCode readLoopbackInput(UA_Server *server,
+                               const UA_NodeId *sessionId, void *sessionContext,
+                               const UA_NodeId *nodeId, void *nodeContext,
+                               UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
+                               UA_DataValue *dataValue);
+
+UA_StatusCode writeLoopbackInput(UA_Server *server,
+                                const UA_NodeId *sessionId, void *sessionContext,
+                                const UA_NodeId *nodeId, void *nodeContext,
+                                const UA_NumericRange *range, const UA_DataValue *data);
+
+UA_StatusCode readLoopbackOutput(UA_Server *server,
+                                const UA_NodeId *sessionId, void *sessionContext,
+                                const UA_NodeId *nodeId, void *nodeContext,
+                                UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
+                                UA_DataValue *dataValue);
+
+#endif /* MODEL_H */

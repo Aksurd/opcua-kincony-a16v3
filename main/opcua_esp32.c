@@ -62,44 +62,76 @@ static void opcua_task(void *arg)
 
     const char *appUri = "open62541.esp32.server";
     UA_String hostName = UA_STRING("opcua-esp32");
-    // #ifdef ENABLE_MDNS
-    //     config->mdnsEnabled = true;
-    //     config->mdnsConfig.mdnsServerName = UA_String_fromChars(appUri);
-    //     config->mdnsConfig.serverCapabilitiesSize = 2;
-    //     UA_String *caps = (UA_String *)UA_Array_new(2, &UA_TYPES[UA_TYPES_STRING]);
-    //     caps[0] = UA_String_fromChars("LDS");
-    //     caps[1] = UA_String_fromChars("NA");
-    //     config->mdnsConfig.serverCapabilities = caps;
-
-    //     // We need to set the default IP address for mDNS since internally it's not able to detect it.
-    //     tcpip_adapter_ip_info_t default_ip;
-
-    //     #ifdef CONFIG_EXAMPLE_CONNECT_ETHERNET
-    //     tcpip_adapter_if_t tcpip_if = TCPIP_ADAPTER_IF_ETH;
-    //     #else
-    //     tcpip_adapter_if_t tcpip_if = TCPIP_ADAPTER_IF_STA;
-    //     #endif
-
-    //     esp_err_t ret = tcpip_adapter_get_ip_info(tcpip_if, &default_ip);
-    //     if ((ESP_OK == ret) && (default_ip.ip.addr != INADDR_ANY))
-    //     {
-    //         config->mdnsIpAddressListSize = 1;
-    //         config->mdnsIpAddressList = (uint32_t *)UA_malloc(sizeof(uint32_t) * config->mdnsIpAddressListSize);
-    //         memcpy(config->mdnsIpAddressList, &default_ip.ip.addr, sizeof(uint32_t));
-    //     }
-    //     else
-    //     {
-    //         ESP_LOGI(TAG, "Could not get default IP Address!");
-    //     }
-    // #endif
+    
     UA_ServerConfig_setUriName(config, appUri, "OPC_UA_Server_ESP32");
     UA_ServerConfig_setCustomHostname(config, hostName);
 
+    // Определяем Node IDs для всех переменных
+    UA_NodeId parentNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
+    UA_NodeId parentReferenceNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES);
+    UA_NodeId variableTypeNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE);
+
+    /* Добавляем диагностические переменные для тестирования производительности */
+
+    // 1. Счётчик (пила) - только чтение
+    UA_VariableAttributes counterAttr = UA_VariableAttributes_default;
+    counterAttr.displayName = UA_LOCALIZEDTEXT("en-US", "Diagnostic Counter");
+    counterAttr.description = UA_LOCALIZEDTEXT("en-US", "Incremental counter for timing tests");
+    counterAttr.dataType = UA_TYPES[UA_TYPES_UINT16].typeId;
+    counterAttr.accessLevel = UA_ACCESSLEVELMASK_READ;
+
+    UA_DataSource counterDataSource;
+    counterDataSource.read = readDiagnosticCounter;
+    counterDataSource.write = NULL;
+
+    UA_NodeId counterNodeId = UA_NODEID_STRING(1, "diagnostic_counter");
+    UA_QualifiedName counterName = UA_QUALIFIEDNAME(1, "Diagnostic Counter");
+
+    UA_Server_addDataSourceVariableNode(server, counterNodeId, parentNodeId,
+                                        parentReferenceNodeId, counterName,
+                                        variableTypeNodeId, counterAttr,
+                                        counterDataSource, NULL, NULL);
+
+    // 2. Loopback Input (чтение/запись)
+    UA_VariableAttributes loopbackInAttr = UA_VariableAttributes_default;
+    loopbackInAttr.displayName = UA_LOCALIZEDTEXT("en-US", "Loopback Input");
+    loopbackInAttr.description = UA_LOCALIZEDTEXT("en-US", "Write value here, read from Loopback Output");
+    loopbackInAttr.dataType = UA_TYPES[UA_TYPES_UINT16].typeId;
+    loopbackInAttr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
+
+    UA_DataSource loopbackInDataSource;
+    loopbackInDataSource.read = readLoopbackInput;
+    loopbackInDataSource.write = writeLoopbackInput;
+
+    UA_NodeId loopbackInNodeId = UA_NODEID_STRING(1, "loopback_input");
+    UA_QualifiedName loopbackInName = UA_QUALIFIEDNAME(1, "Loopback Input");
+
+    UA_Server_addDataSourceVariableNode(server, loopbackInNodeId, parentNodeId,
+                                        parentReferenceNodeId, loopbackInName,
+                                        variableTypeNodeId, loopbackInAttr,
+                                        loopbackInDataSource, NULL, NULL);
+
+    // 3. Loopback Output (только чтение)
+    UA_VariableAttributes loopbackOutAttr = UA_VariableAttributes_default;
+    loopbackOutAttr.displayName = UA_LOCALIZEDTEXT("en-US", "Loopback Output");
+    loopbackOutAttr.description = UA_LOCALIZEDTEXT("en-US", "Mirror of Loopback Input (read-only)");
+    loopbackOutAttr.dataType = UA_TYPES[UA_TYPES_UINT16].typeId;
+    loopbackOutAttr.accessLevel = UA_ACCESSLEVELMASK_READ;
+
+    UA_DataSource loopbackOutDataSource;
+    loopbackOutDataSource.read = readLoopbackOutput;
+    loopbackOutDataSource.write = NULL;
+
+    UA_NodeId loopbackOutNodeId = UA_NODEID_STRING(1, "loopback_output");
+    UA_QualifiedName loopbackOutName = UA_QUALIFIEDNAME(1, "Loopback Output");
+
+    UA_Server_addDataSourceVariableNode(server, loopbackOutNodeId, parentNodeId,
+                                        parentReferenceNodeId, loopbackOutName,
+                                        variableTypeNodeId, loopbackOutAttr,
+                                        loopbackOutDataSource, NULL, NULL);
+
     /* Add Information Model Objects Here */
     addDSTemperatureDataSourceVariable(server);
-    // addCurrentTemperatureDataSourceVariable(server);
-    // addRelay0ControlNode(server);
-    // addRelay1ControlNode(server);
     addDiscreteIOVariables(server);
 
     ESP_LOGI(TAG, "Heap Left : %d", xPortGetFreeHeapSize());
@@ -109,8 +141,8 @@ static void opcua_task(void *arg)
         while (running)
         {
             UA_Server_run_iterate(server, false);
-            /* ЗАМЕНА: было vTaskDelay(100 / portTICK_PERIOD_MS); */
-            vTaskDelay(1);  /* Минимальная задержка для кооперативной многозадачности */
+            /* ОПТИМИЗАЦИЯ: было 100ms, теперь 10ms */
+            vTaskDelay(pdMS_TO_TICKS(10));
             ESP_ERROR_CHECK(esp_task_wdt_reset());
             taskYIELD();
         }
@@ -198,7 +230,7 @@ void app_main(void)
 {
     ++boot_count;
     
-    /* ИНИЦИАЛИЗАЦИЯ КЭША И ЗАДАЧИ ОПРОСА - ДО ВСЕГО */
+    /* ИНИЦИАЛИЗАЦИЯ КЭША И ЗАДАЧИ ОПРОСА */
     ESP_LOGI(TAG, "Initializing IO cache system...");
     io_cache_init();
     io_polling_task_start();

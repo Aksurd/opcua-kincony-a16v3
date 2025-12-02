@@ -270,7 +270,7 @@ float read_temperature_with_timestamps(uint64_t *source_ts, uint64_t *server_ts)
     return -100.0f; // Значение ошибки
 }
 
-/* ===== БЫСТРЫЕ ФУНКЦИИ ===== */
+/* ===== ПРОСТЫЕ БЫСТРЫЕ ФУНКЦИИ ===== */
 
 uint16_t read_discrete_inputs_fast(void) {
     uint64_t source_ts = 0, server_ts = 0;
@@ -289,4 +289,88 @@ float read_temperature_fast(void) {
         return temp;
     }
     return -100.0f;
+}
+
+/* ===== ДИАГНОСТИЧЕСКИЕ ТЕГИ ДЛЯ ИЗМЕРЕНИЯ ПРОИЗВОДИТЕЛЬНОСТИ ===== */
+
+static uint16_t diagnostic_counter = 0;
+static uint16_t loopback_input = 0;
+static uint16_t loopback_output = 0;
+
+uint16_t get_diagnostic_counter(void) {
+    diagnostic_counter++;
+    return diagnostic_counter;
+}
+
+uint16_t get_loopback_input(void) {
+    return loopback_input;
+}
+
+void set_loopback_input(uint16_t val) {
+    loopback_input = val;
+    loopback_output = val;  /* Мгновенный loopback */
+}
+
+uint16_t get_loopback_output(void) {
+    return loopback_output;
+}
+
+/* ===== OPC UA CALLBACKS ДЛЯ ДИАГНОСТИЧЕСКИХ ТЕГОВ ===== */
+
+UA_StatusCode
+readDiagnosticCounter(UA_Server *server,
+                     const UA_NodeId *sessionId, void *sessionContext,
+                     const UA_NodeId *nodeId, void *nodeContext,
+                     UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
+                     UA_DataValue *dataValue) {
+    diagnostic_counter++;
+    UA_UInt16 counter = diagnostic_counter;
+    UA_Variant_setScalarCopy(&dataValue->value, &counter,
+                           &UA_TYPES[UA_TYPES_UINT16]);
+    dataValue->hasValue = true;
+    dataValue->sourceTimestamp = UA_DateTime_now();
+    return UA_STATUSCODE_GOOD;
+}
+
+UA_StatusCode
+readLoopbackInput(UA_Server *server,
+                  const UA_NodeId *sessionId, void *sessionContext,
+                  const UA_NodeId *nodeId, void *nodeContext,
+                  UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
+                  UA_DataValue *dataValue) {
+    UA_UInt16 value = loopback_input;
+    UA_Variant_setScalarCopy(&dataValue->value, &value,
+                           &UA_TYPES[UA_TYPES_UINT16]);
+    dataValue->hasValue = true;
+    dataValue->sourceTimestamp = UA_DateTime_now();
+    return UA_STATUSCODE_GOOD;
+}
+
+UA_StatusCode
+writeLoopbackInput(UA_Server *server,
+                   const UA_NodeId *sessionId, void *sessionContext,
+                   const UA_NodeId *nodeId, void *nodeContext,
+                   const UA_NumericRange *range, const UA_DataValue *data) {
+    if (data->hasValue && UA_Variant_isScalar(&data->value) &&
+        data->value.type == &UA_TYPES[UA_TYPES_UINT16]) {
+        UA_UInt16 value = *(UA_UInt16*)data->value.data;
+        loopback_input = (uint16_t)value;
+        loopback_output = (uint16_t)value;  /* Мгновенный loopback */
+        return UA_STATUSCODE_GOOD;
+    }
+    return UA_STATUSCODE_BADTYPEMISMATCH;
+}
+
+UA_StatusCode
+readLoopbackOutput(UA_Server *server,
+                   const UA_NodeId *sessionId, void *sessionContext,
+                   const UA_NodeId *nodeId, void *nodeContext,
+                   UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
+                   UA_DataValue *dataValue) {
+    UA_UInt16 value = loopback_output;
+    UA_Variant_setScalarCopy(&dataValue->value, &value,
+                           &UA_TYPES[UA_TYPES_UINT16]);
+    dataValue->hasValue = true;
+    dataValue->sourceTimestamp = UA_DateTime_now();
+    return UA_STATUSCODE_GOOD;
 }
