@@ -2,6 +2,7 @@
 #include "model.h"
 #include "driver/gpio.h"
 #include "ds18b20.h"
+#include "io_cache.h"
 #include "pcf8574.h"
 #include "esp_log.h"
 
@@ -249,4 +250,43 @@ void model_init_task(void) {
     ds18b20_init_task();
     
     ESP_LOGI(TAG, "Model initialized with DS18B20 and Discrete I/O");
+}
+
+// ===== ФУНКЦИИ С ВРЕМЕННЫМИ МЕТКАМИ ДЛЯ OPC UA =====
+
+uint16_t read_discrete_inputs_with_timestamps(uint64_t *source_ts, uint64_t *server_ts) {
+    return io_cache_get_discrete_inputs(source_ts, server_ts);
+}
+
+uint16_t read_discrete_outputs_with_timestamps(uint64_t *source_ts, uint64_t *server_ts) {
+    return io_cache_get_discrete_outputs(source_ts, server_ts);
+}
+
+float read_temperature_with_timestamps(uint64_t *source_ts, uint64_t *server_ts) {
+    float temp = 0.0f;
+    if (io_cache_get_temperature(0, &temp, source_ts, server_ts)) {
+        return temp;
+    }
+    return -100.0f; // Значение ошибки
+}
+
+/* ===== БЫСТРЫЕ ФУНКЦИИ ===== */
+
+uint16_t read_discrete_inputs_fast(void) {
+    uint64_t source_ts = 0, server_ts = 0;
+    return io_cache_get_discrete_inputs(&source_ts, &server_ts);
+}
+
+uint16_t read_discrete_outputs_fast(void) {
+    uint64_t source_ts = 0, server_ts = 0;
+    return io_cache_get_discrete_outputs(&source_ts, &server_ts);
+}
+
+float read_temperature_fast(void) {
+    uint64_t source_ts = 0, server_ts = 0;
+    float temp = 0.0f;
+    if (io_cache_get_temperature(0, &temp, &source_ts, &server_ts)) {
+        return temp;
+    }
+    return -100.0f;
 }

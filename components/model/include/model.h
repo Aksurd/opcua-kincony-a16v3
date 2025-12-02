@@ -62,3 +62,18 @@ writeDiscreteOutputs(UA_Server *server,
 
 void addDiscreteIOVariables(UA_Server *server);
 void model_init_task(void);
+
+// Функции с временными метками для OPC UA
+uint16_t read_discrete_inputs_with_timestamps(uint64_t *source_ts, uint64_t *server_ts);
+uint16_t read_discrete_outputs_with_timestamps(uint64_t *source_ts, uint64_t *server_ts);
+float read_temperature_with_timestamps(uint64_t *source_ts, uint64_t *server_ts);
+
+// Функции с временными метками для OPC UA
+uint16_t read_discrete_inputs_with_timestamps(uint64_t *source_ts, uint64_t *server_ts);
+uint16_t read_discrete_outputs_with_timestamps(uint64_t *source_ts, uint64_t *server_ts);
+float read_temperature_with_timestamps(uint64_t *source_ts, uint64_t *server_ts);
+
+/* ===== БЫСТРЫЕ ФУНКЦИИ ===== */
+uint16_t read_discrete_inputs_fast(void);
+uint16_t read_discrete_outputs_fast(void);
+float read_temperature_fast(void);

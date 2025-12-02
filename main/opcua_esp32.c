@@ -1,5 +1,6 @@
 #include "opcua_esp32.h"
 #include "model.h"
+#include "io_cache.h"
 
 #define EXAMPLE_ESP_MAXIMUM_RETRY 10
 
@@ -108,7 +109,8 @@ static void opcua_task(void *arg)
         while (running)
         {
             UA_Server_run_iterate(server, false);
-             vTaskDelay(100 / portTICK_PERIOD_MS);
+            /* ЗАМЕНА: было vTaskDelay(100 / portTICK_PERIOD_MS); */
+            vTaskDelay(1);  /* Минимальная задержка для кооперативной многозадачности */
             ESP_ERROR_CHECK(esp_task_wdt_reset());
             taskYIELD();
         }
@@ -195,6 +197,13 @@ static void connection_scan(void)
 void app_main(void)
 {
     ++boot_count;
+    
+    /* ИНИЦИАЛИЗАЦИЯ КЭША И ЗАДАЧИ ОПРОСА - ДО ВСЕГО */
+    ESP_LOGI(TAG, "Initializing IO cache system...");
+    io_cache_init();
+    io_polling_task_start();
+    vTaskDelay(pdMS_TO_TICKS(100)); /* Дать время на первый опрос железа */
+    
     // Workaround for CVE-2019-15894
     nvs_flash_init();
     if (esp_flash_encryption_enabled())
