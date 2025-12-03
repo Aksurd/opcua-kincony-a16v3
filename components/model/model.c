@@ -16,9 +16,32 @@ readDSTemperature(UA_Server *server,
                 const UA_NodeId *nodeId, void *nodeContext,
                 UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
                 UA_DataValue *dataValue) {
-    UA_Float temperature = ReadDSTemperature(DS18B20_GPIO);
-    UA_Variant_setScalarCopy(&dataValue->value, &temperature,
-                             &UA_TYPES[UA_TYPES_FLOAT]);
+    // Используем кеш вместо прямого чтения
+    float temp_cached = 0.0f;
+    uint64_t source_ts = 0, server_ts = 0;
+    
+    if (io_cache_get_temperature(0, &temp_cached, &source_ts, &server_ts)) {
+        // Данные из кеша (<1 мс)
+        UA_Float temperature = (UA_Float)temp_cached;
+        UA_Variant_setScalarCopy(&dataValue->value, &temperature,
+                                 &UA_TYPES[UA_TYPES_FLOAT]);
+        
+        // Устанавливаем временные метки если запрошено
+        if (sourceTimeStamp && source_ts > 0) {
+            dataValue->sourceTimestamp = UA_DateTime_fromUnixTime((UA_Int64)(source_ts / 1000));
+        }
+        
+        ESP_LOGD(TAG, "Temperature from cache: %.2f°C (source ts: %llu)", 
+                 temp_cached, source_ts);
+    } else {
+        // Fallback: прямое чтение (медленно)
+        UA_Float temperature = (UA_Float)ReadDSTemperature(DS18B20_GPIO);
+        UA_Variant_setScalarCopy(&dataValue->value, &temperature,
+                                 &UA_TYPES[UA_TYPES_FLOAT]);
+        ESP_LOGW(TAG, "Cache miss for temperature, using direct read: %.2f°C", 
+                 (float)temperature);
+    }
+    
     dataValue->hasValue = true;
     return UA_STATUSCODE_GOOD;
 }
@@ -28,6 +51,7 @@ void
 addDSTemperatureDataSourceVariable(UA_Server *server) {
     UA_VariableAttributes attr = UA_VariableAttributes_default;
     attr.displayName = UA_LOCALIZEDTEXT("en-US", "Temperature");
+    attr.description = UA_LOCALIZEDTEXT("en-US", "Ambient temperature with caching");
     attr.dataType = UA_TYPES[UA_TYPES_FLOAT].typeId;
     attr.accessLevel = UA_ACCESSLEVELMASK_READ;
 
@@ -39,6 +63,7 @@ addDSTemperatureDataSourceVariable(UA_Server *server) {
 
     UA_DataSource timeDataSource;
     timeDataSource.read = readDSTemperature;
+    timeDataSource.write = NULL;
     UA_Server_addDataSourceVariableNode(server, currentNodeId, parentNodeId,
                                         parentReferenceNodeId, currentName,
                                         variableTypeNodeId, attr,
@@ -49,8 +74,6 @@ addDSTemperatureDataSourceVariable(UA_Server *server) {
 
 // Дескрипторы устройств PCF8574
 static pcf8574_dev_t dio_in1, dio_in2, dio_out1, dio_out2;
-static uint16_t current_inputs = 0;
-static uint16_t current_outputs = 0;
 static bool dio_initialized = false;
 
 // Инициализация дискретных I/O
@@ -86,8 +109,8 @@ void discrete_io_init(void) {
     ESP_LOGI(TAG, "Discrete I/O initialized");
 }
 
-// Чтение 16 дискретных входов
-uint16_t read_discrete_inputs(void) {
+// Чтение 16 дискретных входов (медленная функция для обновления кеша)
+uint16_t read_discrete_inputs_slow(void) {
     // Ленивая инициализация при первом вызове
     if (!dio_initialized) {
         ESP_LOGI(TAG, "First call to discrete I/O - initializing...");
@@ -105,12 +128,13 @@ uint16_t read_discrete_inputs(void) {
     in1 = ~in1;
     in2 = ~in2;
     
-    current_inputs = ((uint16_t)in2 << 8) | in1;
-    return current_inputs;
+    uint16_t inputs = ((uint16_t)in2 << 8) | in1;
+    ESP_LOGD(TAG, "Direct read inputs: 0x%04X", inputs);
+    return inputs;
 }
 
 // Запись 16 дискретных выходов
-void write_discrete_outputs(uint16_t outputs) {
+void write_discrete_outputs_slow(uint16_t outputs) {
     // Ленивая инициализация при первом вызове
     if (!dio_initialized) {
         ESP_LOGI(TAG, "First call to discrete I/O - initializing...");
@@ -121,8 +145,6 @@ void write_discrete_outputs(uint16_t outputs) {
         }
     }
     
-    current_outputs = outputs;
-    
     uint8_t out1 = outputs & 0xFF;
     uint8_t out2 = (outputs >> 8) & 0xFF;
     
@@ -132,53 +154,61 @@ void write_discrete_outputs(uint16_t outputs) {
     
     pcf8574_write(&dio_out1, out1);
     pcf8574_write(&dio_out2, out2);
-}
-
-// Чтение текущих выходов
-uint16_t get_current_outputs(void) {
-    // Ленивая инициализация при первом вызове
-    if (!dio_initialized) {
-        ESP_LOGI(TAG, "First call to discrete I/O - initializing...");
-        discrete_io_init();
-        if (!dio_initialized) {
-            ESP_LOGE(TAG, "Failed to initialize discrete I/O");
-            return 0xFFFF;
-        }
-    }
-    return current_outputs;
+    
+    ESP_LOGD(TAG, "Direct write outputs: 0x%04X", outputs);
 }
 
 // =================== OPC UA FUNCTIONS FOR DISCRETE I/O ===================
 
-// Функция чтения дискретных входов для OPC UA
+// Функция чтения дискретных входов для OPC UA (с использованием кеша)
 UA_StatusCode
 readDiscreteInputs(UA_Server *server,
                   const UA_NodeId *sessionId, void *sessionContext,
                   const UA_NodeId *nodeId, void *nodeContext,
                   UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
                   UA_DataValue *dataValue) {
-    UA_UInt16 inputs = read_discrete_inputs();
+    // Используем кеш вместо прямого чтения
+    uint64_t source_ts = 0, server_ts = 0;
+    UA_UInt16 inputs = io_cache_get_discrete_inputs(&source_ts, &server_ts);
+    
     UA_Variant_setScalarCopy(&dataValue->value, &inputs,
                            &UA_TYPES[UA_TYPES_UINT16]);
+    
+    // Устанавливаем временные метки если запрошено
+    if (sourceTimeStamp && source_ts > 0) {
+        dataValue->sourceTimestamp = UA_DateTime_fromUnixTime((UA_Int64)(source_ts / 1000));
+    }
+    
     dataValue->hasValue = true;
+    ESP_LOGD(TAG, "Inputs from cache: 0x%04X (source ts: %llu)", inputs, source_ts);
     return UA_STATUSCODE_GOOD;
 }
 
-// Функция чтения дискретных выходов для OPC UA
+// Функция чтения дискретных выходов для OPC UA (с использованием кеша)
 UA_StatusCode
 readDiscreteOutputs(UA_Server *server,
                    const UA_NodeId *sessionId, void *sessionContext,
                    const UA_NodeId *nodeId, void *nodeContext,
                    UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
                    UA_DataValue *dataValue) {
-    UA_UInt16 outputs = get_current_outputs();
+    // Используем кеш вместо прямого чтения
+    uint64_t source_ts = 0, server_ts = 0;
+    UA_UInt16 outputs = io_cache_get_discrete_outputs(&source_ts, &server_ts);
+    
     UA_Variant_setScalarCopy(&dataValue->value, &outputs,
                            &UA_TYPES[UA_TYPES_UINT16]);
+    
+    // Устанавливаем временные метки если запрошено
+    if (sourceTimeStamp && source_ts > 0) {
+        dataValue->sourceTimestamp = UA_DateTime_fromUnixTime((UA_Int64)(source_ts / 1000));
+    }
+    
     dataValue->hasValue = true;
+    ESP_LOGD(TAG, "Outputs from cache: 0x%04X (source ts: %llu)", outputs, source_ts);
     return UA_STATUSCODE_GOOD;
 }
 
-// Функция записи дискретных выходов для OPC UA
+// Функция записи дискретных выходов для OPC UA (обновляем кеш и физическое устройство)
 UA_StatusCode
 writeDiscreteOutputs(UA_Server *server,
                     const UA_NodeId *sessionId, void *sessionContext,
@@ -187,7 +217,15 @@ writeDiscreteOutputs(UA_Server *server,
     if (data->hasValue && UA_Variant_isScalar(&data->value) &&
         data->value.type == &UA_TYPES[UA_TYPES_UINT16]) {
         UA_UInt16 outputs = *(UA_UInt16*)data->value.data;
-        write_discrete_outputs((uint16_t)outputs);
+        
+        // 1. Обновляем физическое устройство (медленно)
+        write_discrete_outputs_slow((uint16_t)outputs);
+        
+        // 2. Обновляем кеш с текущей временной меткой
+        uint64_t timestamp_ms = (uint64_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+        io_cache_update_discrete_outputs((uint16_t)outputs, timestamp_ms);
+        
+        ESP_LOGD(TAG, "Outputs written: 0x%04X (ts: %llu)", (uint16_t)outputs, timestamp_ms);
         return UA_STATUSCODE_GOOD;
     }
     return UA_STATUSCODE_BADTYPEMISMATCH;
@@ -199,7 +237,7 @@ addDiscreteIOVariables(UA_Server *server) {
     // 1. Переменная для ЧТЕНИЯ входов (только чтение)
     UA_VariableAttributes inputAttr = UA_VariableAttributes_default;
     inputAttr.displayName = UA_LOCALIZEDTEXT("en-US", "Discrete Inputs");
-    inputAttr.description = UA_LOCALIZEDTEXT("en-US", "16 discrete inputs (read-only)");
+    inputAttr.description = UA_LOCALIZEDTEXT("en-US", "16 discrete inputs with caching");
     inputAttr.dataType = UA_TYPES[UA_TYPES_UINT16].typeId;
     inputAttr.accessLevel = UA_ACCESSLEVELMASK_READ;
     
@@ -221,7 +259,7 @@ addDiscreteIOVariables(UA_Server *server) {
     // 2. Переменная для ВЫХОДОВ (чтение/запись)
     UA_VariableAttributes outputAttr = UA_VariableAttributes_default;
     outputAttr.displayName = UA_LOCALIZEDTEXT("en-US", "Discrete Outputs");
-    outputAttr.description = UA_LOCALIZEDTEXT("en-US", "16 discrete outputs (read/write)");
+    outputAttr.description = UA_LOCALIZEDTEXT("en-US", "16 discrete outputs with caching");
     outputAttr.dataType = UA_TYPES[UA_TYPES_UINT16].typeId;
     outputAttr.accessLevel = UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE;
     
@@ -237,7 +275,7 @@ addDiscreteIOVariables(UA_Server *server) {
                                         variableTypeNodeId, outputAttr,
                                         outputDataSource, NULL, NULL);
     
-    ESP_LOGI(TAG, "Discrete I/O variables added to OPC UA server");
+    ESP_LOGI(TAG, "Discrete I/O variables added to OPC UA server (with caching)");
 }
 
 // =================== MAIN INIT FUNCTION ===================
@@ -273,19 +311,16 @@ float read_temperature_with_timestamps(uint64_t *source_ts, uint64_t *server_ts)
 /* ===== ПРОСТЫЕ БЫСТРЫЕ ФУНКЦИИ ===== */
 
 uint16_t read_discrete_inputs_fast(void) {
-    uint64_t source_ts = 0, server_ts = 0;
-    return io_cache_get_discrete_inputs(&source_ts, &server_ts);
+    return io_cache_get_discrete_inputs(NULL, NULL);
 }
 
 uint16_t read_discrete_outputs_fast(void) {
-    uint64_t source_ts = 0, server_ts = 0;
-    return io_cache_get_discrete_outputs(&source_ts, &server_ts);
+    return io_cache_get_discrete_outputs(NULL, NULL);
 }
 
 float read_temperature_fast(void) {
-    uint64_t source_ts = 0, server_ts = 0;
     float temp = 0.0f;
-    if (io_cache_get_temperature(0, &temp, &source_ts, &server_ts)) {
+    if (io_cache_get_temperature(0, &temp, NULL, NULL)) {
         return temp;
     }
     return -100.0f;
@@ -373,4 +408,37 @@ readLoopbackOutput(UA_Server *server,
     dataValue->hasValue = true;
     dataValue->sourceTimestamp = UA_DateTime_now();
     return UA_STATUSCODE_GOOD;
+}
+
+/* ===== ЗАДАЧА ДЛЯ ОБНОВЛЕНИЯ КЕША ===== */
+
+void io_polling_task(void *pvParameters) {
+    ESP_LOGI(TAG, "IO Polling Task started");
+    
+    TickType_t last_temp_update = 0;
+    const TickType_t temp_interval_ticks = pdMS_TO_TICKS(1000);  // 1 секунда
+    const TickType_t inputs_interval_ticks = pdMS_TO_TICKS(20);   // 20 мс
+    
+    while (1) {
+        TickType_t current_tick = xTaskGetTickCount();
+        uint64_t timestamp_ms = (uint64_t)(current_tick * portTICK_PERIOD_MS);
+        
+        // Обновление температуры (раз в секунду)
+        if (current_tick - last_temp_update >= temp_interval_ticks) {
+            float temp = ReadDSTemperature(DS18B20_GPIO);  // медленное чтение
+            io_cache_update_temperature(0, temp, timestamp_ms);
+            last_temp_update = current_tick;
+            ESP_LOGD(TAG, "Temperature cache updated: %.2f°C", temp);
+        }
+        
+        // Обновление дискретных входов (каждые 20 мс)
+        static TickType_t last_inputs_update = 0;
+        if (current_tick - last_inputs_update >= inputs_interval_ticks) {
+            uint16_t inputs = read_discrete_inputs_slow();  // медленное чтение
+            io_cache_update_discrete_inputs(inputs, timestamp_ms);
+            last_inputs_update = current_tick;
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(10));  // Базовая задержка цикла
+    }
 }

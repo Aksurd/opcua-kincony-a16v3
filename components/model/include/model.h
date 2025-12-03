@@ -63,6 +63,10 @@ uint16_t read_discrete_inputs_fast(void);
 uint16_t read_discrete_outputs_fast(void);
 float read_temperature_fast(void);
 
+
+uint16_t read_discrete_inputs_slow(void);
+void write_discrete_outputs_slow(uint16_t outputs);
+
 /* ===== ДИАГНОСТИЧЕСКИЕ ТЕГИ ДЛЯ ИЗМЕРЕНИЯ ПРОИЗВОДИТЕЛЬНОСТИ ===== */
 uint16_t get_diagnostic_counter(void);
 uint16_t get_loopback_input(void);

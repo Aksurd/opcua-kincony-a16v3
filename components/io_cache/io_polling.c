@@ -23,7 +23,7 @@ static void io_polling_task(void *pvParameters) {
         TickType_t xNow = xTaskGetTickCount();
         
         if ((xNow - xLastInputsTime) * portTICK_PERIOD_MS >= POLL_INPUTS_INTERVAL_MS) {
-            uint16_t inputs = read_discrete_inputs();
+            uint16_t inputs = read_discrete_inputs_slow();
             uint64_t timestamp = get_current_time_ms();
             io_cache_update_discrete_inputs(inputs, timestamp);
             xLastInputsTime = xNow;
