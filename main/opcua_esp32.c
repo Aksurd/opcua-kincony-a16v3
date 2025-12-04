@@ -141,8 +141,8 @@ static void opcua_task(void *arg)
         while (running)
         {
             UA_Server_run_iterate(server, false);
-            /* ОПТИМИЗАЦИЯ: было 100ms, теперь 10ms */
-            vTaskDelay(pdMS_TO_TICKS(10));
+            /* ОПТИМИЗАЦИЯ: было 100ms, теперь 1ms */
+           // vTaskDelay(pdMS_TO_TICKS(1));
             ESP_ERROR_CHECK(esp_task_wdt_reset());
             taskYIELD();
         }
