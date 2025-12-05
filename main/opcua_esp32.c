@@ -6,8 +6,7 @@
 
 #define TAG "OPCUA_ESP32"
 #define SNTP_TAG "SNTP"
-#define MEMORY_TAG "MEMORY"
-#define ENABLE_MDNS 1
+#define WDT_TAG "WATCHDOG"
 
 static bool obtain_time(void);
 static void initialize_sntp(void);
@@ -53,10 +52,22 @@ static void opcua_task(void *arg)
     UA_Int32 sendBufferSize = 16384;
     UA_Int32 recvBufferSize = 16384;
 
-    ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
+    esp_err_t wdt_err = esp_task_wdt_add(NULL);
+    if (wdt_err != ESP_OK) {
+        ESP_LOGE(WDT_TAG, "Failed to add task to WDT: %s", esp_err_to_name(wdt_err));
+    } else {
+        ESP_LOGI(WDT_TAG, "Task added to watchdog");
+    }
 
-    ESP_LOGI(TAG, "Fire up OPC UA Server.");
+    ESP_LOGI(TAG, "OPC UA Server starting");
+    
     UA_Server *server = UA_Server_new();
+    if (server == NULL) {
+        ESP_LOGE(TAG, "Failed to create OPC UA server!");
+        vTaskDelete(NULL);
+        return;
+    }
+    
     UA_ServerConfig *config = UA_Server_getConfig(server);
     UA_ServerConfig_setMinimalCustomBuffer(config, 4840, 0, sendBufferSize, recvBufferSize);
 
@@ -71,9 +82,9 @@ static void opcua_task(void *arg)
     UA_NodeId parentReferenceNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES);
     UA_NodeId variableTypeNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE);
 
-    /* Добавляем диагностические переменные для тестирования производительности */
+    /* Добавляем диагностические переменные */
 
-    // 1. Счётчик (пила) - только чтение
+    // 1. Счётчик
     UA_VariableAttributes counterAttr = UA_VariableAttributes_default;
     counterAttr.displayName = UA_LOCALIZEDTEXT("en-US", "Diagnostic Counter");
     counterAttr.description = UA_LOCALIZEDTEXT("en-US", "Incremental counter for timing tests");
@@ -87,12 +98,15 @@ static void opcua_task(void *arg)
     UA_NodeId counterNodeId = UA_NODEID_STRING(1, "diagnostic_counter");
     UA_QualifiedName counterName = UA_QUALIFIEDNAME(1, "Diagnostic Counter");
 
-    UA_Server_addDataSourceVariableNode(server, counterNodeId, parentNodeId,
+    UA_StatusCode add_status = UA_Server_addDataSourceVariableNode(server, counterNodeId, parentNodeId,
                                         parentReferenceNodeId, counterName,
                                         variableTypeNodeId, counterAttr,
                                         counterDataSource, NULL, NULL);
+    if (add_status != UA_STATUSCODE_GOOD) {
+        ESP_LOGE(TAG, "Failed to add diagnostic counter: 0x%08X", add_status);
+    }
 
-    // 2. Loopback Input (чтение/запись)
+    // 2. Loopback Input
     UA_VariableAttributes loopbackInAttr = UA_VariableAttributes_default;
     loopbackInAttr.displayName = UA_LOCALIZEDTEXT("en-US", "Loopback Input");
     loopbackInAttr.description = UA_LOCALIZEDTEXT("en-US", "Write value here, read from Loopback Output");
@@ -106,12 +120,15 @@ static void opcua_task(void *arg)
     UA_NodeId loopbackInNodeId = UA_NODEID_STRING(1, "loopback_input");
     UA_QualifiedName loopbackInName = UA_QUALIFIEDNAME(1, "Loopback Input");
 
-    UA_Server_addDataSourceVariableNode(server, loopbackInNodeId, parentNodeId,
+    add_status = UA_Server_addDataSourceVariableNode(server, loopbackInNodeId, parentNodeId,
                                         parentReferenceNodeId, loopbackInName,
                                         variableTypeNodeId, loopbackInAttr,
                                         loopbackInDataSource, NULL, NULL);
+    if (add_status != UA_STATUSCODE_GOOD) {
+        ESP_LOGE(TAG, "Failed to add loopback input: 0x%08X", add_status);
+    }
 
-    // 3. Loopback Output (только чтение)
+    // 3. Loopback Output
     UA_VariableAttributes loopbackOutAttr = UA_VariableAttributes_default;
     loopbackOutAttr.displayName = UA_LOCALIZEDTEXT("en-US", "Loopback Output");
     loopbackOutAttr.description = UA_LOCALIZEDTEXT("en-US", "Mirror of Loopback Input (read-only)");
@@ -125,35 +142,76 @@ static void opcua_task(void *arg)
     UA_NodeId loopbackOutNodeId = UA_NODEID_STRING(1, "loopback_output");
     UA_QualifiedName loopbackOutName = UA_QUALIFIEDNAME(1, "Loopback Output");
 
-    UA_Server_addDataSourceVariableNode(server, loopbackOutNodeId, parentNodeId,
+    add_status = UA_Server_addDataSourceVariableNode(server, loopbackOutNodeId, parentNodeId,
                                         parentReferenceNodeId, loopbackOutName,
                                         variableTypeNodeId, loopbackOutAttr,
                                         loopbackOutDataSource, NULL, NULL);
+    if (add_status != UA_STATUSCODE_GOOD) {
+        ESP_LOGE(TAG, "Failed to add loopback output: 0x%08X", add_status);
+    }
 
     /* Add Information Model Objects Here */
-    addDSTemperatureDataSourceVariable(server);
+    // УДАЛЕНО: addDSTemperatureDataSourceVariable(server);
     addDiscreteIOVariables(server);
-
-    ESP_LOGI(TAG, "Heap Left : %d", xPortGetFreeHeapSize());
+    
+    ESP_LOGI(TAG, "OPC UA server initialized");
+    
     UA_StatusCode retval = UA_Server_run_startup(server);
-    if (retval == UA_STATUSCODE_GOOD)
+    if (retval != UA_STATUSCODE_GOOD)
     {
-        while (running)
-        {
-            UA_Server_run_iterate(server, false);
-            /* ОПТИМИЗАЦИЯ: было 100ms, теперь 1ms */
-           // vTaskDelay(pdMS_TO_TICKS(1));
-            ESP_ERROR_CHECK(esp_task_wdt_reset());
-            taskYIELD();
-        }
-        UA_Server_run_shutdown(server);
+        ESP_LOGE(TAG, "OPC UA server startup failed: 0x%08X", retval);
+        UA_Server_delete(server);
+        esp_task_wdt_delete(NULL);
+        vTaskDelete(NULL);
+        return;
     }
-    ESP_ERROR_CHECK(esp_task_wdt_delete(NULL));
+    
+    ESP_LOGI(TAG, "OPC UA server running");
+    
+    uint32_t watchdog_reset_errors = 0;
+    const uint32_t max_watchdog_errors = 10;
+    
+    while (running)
+    {
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: используем timeout 10ms вместо блокирующего вызова
+        UA_Server_run_iterate(server, 10); // 10ms timeout
+        
+        // Сброс watchdog
+        esp_err_t reset_err = esp_task_wdt_reset();
+        if (reset_err != ESP_OK) {
+            watchdog_reset_errors++;
+            ESP_LOGE(WDT_TAG, "Watchdog reset failed: %s (error %d/%d)", 
+                     esp_err_to_name(reset_err), 
+                     watchdog_reset_errors, 
+                     max_watchdog_errors);
+            
+            if (watchdog_reset_errors >= max_watchdog_errors) {
+                ESP_LOGE(WDT_TAG, "Too many watchdog errors, restarting task");
+                break;
+            }
+        } else {
+            watchdog_reset_errors = 0;
+        }
+        
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: даем время другим задачам
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    
+    ESP_LOGW(TAG, "OPC UA server shutting down");
+    UA_Server_run_shutdown(server);
+    UA_Server_delete(server);
+    
+    esp_err_t delete_err = esp_task_wdt_delete(NULL);
+    if (delete_err != ESP_OK) {
+        ESP_LOGE(WDT_TAG, "Failed to delete task from WDT: %s", esp_err_to_name(delete_err));
+    }
+    
+    vTaskDelete(NULL);
 }
 
 void time_sync_notification_cb(struct timeval *tv)
 {
-    ESP_LOGI(SNTP_TAG, "Notification of a time synchronization event");
+    ESP_LOGI(SNTP_TAG, "Time synchronized");
 }
 
 static void initialize_sntp(void)
@@ -163,6 +221,7 @@ static void initialize_sntp(void)
     sntp_setservername(0, "pool.ntp.org");
     sntp_setservername(1, "time.google.com");
     sntp_set_time_sync_notification_cb(time_sync_notification_cb);
+    
     sntp_init();
     sntp_initialized = true;
 }
@@ -170,20 +229,50 @@ static void initialize_sntp(void)
 static bool obtain_time(void)
 {
     initialize_sntp();
-    ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
+    
+    esp_err_t wdt_err = esp_task_wdt_add(NULL);
+    if (wdt_err != ESP_OK) {
+        ESP_LOGE(WDT_TAG, "Failed to add SNTP task to WDT: %s", esp_err_to_name(wdt_err));
+    }
+    
     memset(&timeinfo, 0, sizeof(struct tm));
     int retry = 0;
     const int retry_count = 10;
+    
+    ESP_LOGI(SNTP_TAG, "Getting time from NTP...");
+    
     while (sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && ++retry <= retry_count)
     {
-        ESP_LOGI(SNTP_TAG, "Waiting for system time to be set... (%d/%d)", retry, retry_count);
+        if (retry % 3 == 0) {
+            ESP_LOGW(SNTP_TAG, "Still waiting for NTP... (%d/%d)", retry, retry_count);
+        }
+        
         vTaskDelay(2000 / portTICK_PERIOD_MS);
-        ESP_ERROR_CHECK(esp_task_wdt_reset());
+        
+        esp_err_t reset_err = esp_task_wdt_reset();
+        if (reset_err != ESP_OK) {
+            ESP_LOGE(WDT_TAG, "SNTP WDT reset failed: %s", esp_err_to_name(reset_err));
+        }
     }
+    
     time(&now);
     localtime_r(&now, &timeinfo);
-    ESP_ERROR_CHECK(esp_task_wdt_delete(NULL));
-    return timeinfo.tm_year > (2016 - 1900);
+    
+    esp_err_t delete_err = esp_task_wdt_delete(NULL);
+    if (delete_err != ESP_OK) {
+        ESP_LOGE(WDT_TAG, "Failed to delete SNTP task from WDT: %s", esp_err_to_name(delete_err));
+    }
+    
+    if (timeinfo.tm_year <= (2016 - 1900)) {
+        ESP_LOGE(SNTP_TAG, "Failed to get valid time from NTP");
+        return false;
+    }
+    
+    ESP_LOGI(SNTP_TAG, "Time obtained: %04d-%02d-%02d %02d:%02d:%02d", 
+             timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+             timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+    
+    return true;
 }
 
 static void opc_event_handler(void *arg, esp_event_base_t event_base,
@@ -193,48 +282,76 @@ static void opc_event_handler(void *arg, esp_event_base_t event_base,
     {
         if (timeinfo.tm_year < (2016 - 1900))
         {
-            ESP_LOGI(SNTP_TAG, "Time is not set yet. Settting up network connection and getting time over NTP.");
+            ESP_LOGI(SNTP_TAG, "Getting time from NTP");
             if (!obtain_time())
             {
-                ESP_LOGE(SNTP_TAG, "Could not get time from NTP. Using default timestamp.");
+                ESP_LOGE(SNTP_TAG, "NTP failed, using default time");
+                now = 0;
             }
             time(&now);
         }
         localtime_r(&now, &timeinfo);
-        ESP_LOGI(SNTP_TAG, "Current time: %d-%02d-%02d %02d:%02d:%02d", timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday, timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
     }
 
     if (!isServerCreated)
     {
-        xTaskCreatePinnedToCore(opcua_task, "opcua_task", 24336, NULL, 10, NULL, 1);
-        ESP_LOGI(MEMORY_TAG, "Heap size after OPC UA Task : %d", esp_get_free_heap_size());
-        isServerCreated = true;
+        ESP_LOGI(TAG, "Creating OPC UA task...");
+        // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: запускаем на ядре 0, приоритет 5
+        BaseType_t task_created = xTaskCreatePinnedToCore(opcua_task, "opcua_task", 
+                                                          24336, NULL, 5, NULL, 0);
+        if (task_created != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create OPC UA task!");
+        } else {
+            isServerCreated = true;
+        }
     }
 }
 
 static void disconnect_handler(void *arg, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
 {
+    ESP_LOGW(TAG, "Network disconnected");
+    running = false;
 }
 
 static void connection_scan(void)
 {
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
-    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, GOT_IP_EVENT, &opc_event_handler, NULL));
-    ESP_ERROR_CHECK(esp_event_handler_register(BASE_IP_EVENT, DISCONNECT_EVENT, &disconnect_handler, NULL));
-    ESP_ERROR_CHECK(example_connect());
+    ESP_LOGI(TAG, "Initializing network...");
+    
+    esp_err_t netif_err = esp_netif_init();
+    if (netif_err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to init netif: %s", esp_err_to_name(netif_err));
+    }
+    
+    esp_err_t event_err = esp_event_loop_create_default();
+    if (event_err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create event loop: %s", esp_err_to_name(event_err));
+    }
+    
+    esp_err_t handler_err = esp_event_handler_register(IP_EVENT, GOT_IP_EVENT, &opc_event_handler, NULL);
+    if (handler_err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register IP event handler: %s", esp_err_to_name(handler_err));
+    }
+    
+    handler_err = esp_event_handler_register(BASE_IP_EVENT, DISCONNECT_EVENT, &disconnect_handler, NULL);
+    if (handler_err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register disconnect handler: %s", esp_err_to_name(handler_err));
+    }
+    
+    ESP_LOGI(TAG, "Connecting to network...");
+    example_connect();
 }
 
 void app_main(void)
 {
     ++boot_count;
+    ESP_LOGI(TAG, "Boot count: %d", boot_count);
     
     /* ИНИЦИАЛИЗАЦИЯ КЭША И ЗАДАЧИ ОПРОСА */
     ESP_LOGI(TAG, "Initializing IO cache system...");
     io_cache_init();
     io_polling_task_start();
-    vTaskDelay(pdMS_TO_TICKS(100)); /* Дать время на первый опрос железа */
+    vTaskDelay(pdMS_TO_TICKS(100));
     
     // Workaround for CVE-2019-15894
     nvs_flash_init();
@@ -246,8 +363,14 @@ void app_main(void)
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES)
     {
+        ESP_LOGI(TAG, "Erasing NVS partition...");
         ESP_ERROR_CHECK(nvs_flash_erase());
         ESP_ERROR_CHECK(nvs_flash_init());
+    } else if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "NVS initialized");
     }
+    
     connection_scan();
 }

@@ -3,31 +3,11 @@
 
 #include "open62541.h"
 
-/* GPIO Numbers */
-#define DS18B20_GPIO 47
-
 /* PCF8574 Addresses for KC868-A16v3 */
 #define DIO_IN1_ADDR  0x22  // Input module 1
 #define DIO_IN2_ADDR  0x21  // Input module 2
 #define DIO_OUT1_ADDR 0x24  // Relay/output module 1
 #define DIO_OUT2_ADDR 0x25  // Relay/output module 2
-
-// Явно включаем заголовочные файлы библиотек
-#include "ds18b20.h"
-
-// Функции для работы с DS18B20
-void ds18b20_init_task(void);
-float read_ds18b20_temperature(void);
-
-UA_StatusCode
-readDSTemperature(UA_Server *server,
-                const UA_NodeId *sessionId, void *sessionContext,
-                const UA_NodeId *nodeId, void *nodeContext,
-                UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
-                UA_DataValue *dataValue);
-
-void
-addDSTemperatureDataSourceVariable(UA_Server *server);
 
 // Функции для дискретных I/O
 void discrete_io_init(void);
@@ -61,8 +41,6 @@ void model_init_task(void);
 /* ===== БЫСТРЫЕ ФУНКЦИИ ДЛЯ OPC UA (работают с кэшем) ===== */
 uint16_t read_discrete_inputs_fast(void);
 uint16_t read_discrete_outputs_fast(void);
-float read_temperature_fast(void);
-
 
 uint16_t read_discrete_inputs_slow(void);
 void write_discrete_outputs_slow(uint16_t outputs);

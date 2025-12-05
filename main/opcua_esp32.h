@@ -19,7 +19,6 @@
 #include "ethernet_connect.h"
 #include "open62541.h"
 //#include "DHT22.h"
-#include "ds18b20.h"
 #include "model.h"
 
 #endif /* OPCUA_ESP32_H */
