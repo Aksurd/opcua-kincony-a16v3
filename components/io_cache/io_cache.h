@@ -24,3 +24,9 @@ void io_polling_task_start(void);
 #endif
 
 #endif
+
+// ADC функции кэша
+bool io_cache_get_adc_channel(int channel, float *value, uint64_t *source_timestamp, uint64_t *server_timestamp);
+float* io_cache_get_all_adc_channels(void);
+void io_cache_update_adc_channel(int channel, float new_value, uint64_t source_timestamp_ms);
+void io_cache_update_all_adc_channels(float* values, uint64_t source_timestamp_ms);

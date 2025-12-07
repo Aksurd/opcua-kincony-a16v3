@@ -153,7 +153,6 @@ static void opcua_task(void *arg)
     /* Add Information Model Objects Here */
     // УДАЛЕНО: addDSTemperatureDataSourceVariable(server);
     addDiscreteIOVariables(server);
-    addAdcVariables(server);
     
     ESP_LOGI(TAG, "OPC UA server initialized");
     
@@ -351,7 +350,6 @@ void app_main(void)
     /* ИНИЦИАЛИЗАЦИЯ КЭША И ЗАДАЧИ ОПРОСА */
     ESP_LOGI(TAG, "Initializing IO cache system...");
     io_cache_init();
-    adc_init();
     io_polling_task_start();
     vTaskDelay(pdMS_TO_TICKS(100));
     

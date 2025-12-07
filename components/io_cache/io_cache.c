@@ -81,3 +81,62 @@ void io_cache_update_discrete_outputs(uint16_t new_val, uint64_t source_timestam
 }
 
 // УДАЛЕНО ВСЯ ФУНКЦИЯ: void io_cache_update_temperature(...)
+
+// ADC кэш
+#define NUM_ADC_CHANNELS 4
+typedef struct {
+    float adc_cache[NUM_ADC_CHANNELS];
+    uint64_t adc_timestamps_ms[NUM_ADC_CHANNELS];
+    uint64_t adc_server_timestamps_ms[NUM_ADC_CHANNELS];
+    bool adc_valid[NUM_ADC_CHANNELS];
+} io_cache_adc_t;
+
+static io_cache_adc_t adc_cache;
+
+// В io_cache_init() добавляем:
+// memset(&adc_cache, 0, sizeof(io_cache_adc_t));
+
+bool io_cache_get_adc_channel(int channel, float *value, uint64_t *source_timestamp, uint64_t *server_timestamp) {
+    if (channel < 0 || channel >= NUM_ADC_CHANNELS || !adc_cache.adc_valid[channel]) {
+        return false;
+    }
+    
+    if (xSemaphoreTake(io_cache.mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+        *value = adc_cache.adc_cache[channel];
+        if (source_timestamp) *source_timestamp = adc_cache.adc_timestamps_ms[channel];
+        if (server_timestamp) *server_timestamp = adc_cache.adc_server_timestamps_ms[channel];
+        xSemaphoreGive(io_cache.mutex);
+        return true;
+    }
+    return false;
+}
+
+float* io_cache_get_all_adc_channels(void) {
+    return adc_cache.adc_cache;
+}
+
+void io_cache_update_adc_channel(int channel, float new_value, uint64_t source_timestamp_ms) {
+    if (channel < 0 || channel >= NUM_ADC_CHANNELS) return;
+    
+    if (xSemaphoreTake(io_cache.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+        adc_cache.adc_cache[channel] = new_value;
+        adc_cache.adc_timestamps_ms[channel] = source_timestamp_ms;
+        adc_cache.adc_server_timestamps_ms[channel] = get_current_time_ms();
+        adc_cache.adc_valid[channel] = true;
+        xSemaphoreGive(io_cache.mutex);
+    }
+}
+
+void io_cache_update_all_adc_channels(float* values, uint64_t source_timestamp_ms) {
+    if (!values) return;
+    
+    if (xSemaphoreTake(io_cache.mutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+        for (int i = 0; i < NUM_ADC_CHANNELS; i++) {
+            adc_cache.adc_cache[i] = values[i];
+            adc_cache.adc_timestamps_ms[i] = source_timestamp_ms;
+            adc_cache.adc_server_timestamps_ms[i] = get_current_time_ms();
+            adc_cache.adc_valid[i] = true;
+        }
+        xSemaphoreGive(io_cache.mutex);
+    }
+}

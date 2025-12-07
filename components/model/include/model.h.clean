@@ -76,29 +76,3 @@ UA_StatusCode readLoopbackOutput(UA_Server *server,
                                 UA_DataValue *dataValue);
 
 #endif /* MODEL_H */
-
-/* ===== ADC FUNCTIONS ===== */
-#define OUR_ADC_CHANNEL_1     ADC_CHANNEL_3  // GPIO4 - ANALOG_A1
-#define OUR_ADC_CHANNEL_2     ADC_CHANNEL_4  // GPIO6 - ANALOG_A2
-#define OUR_ADC_CHANNEL_3     ADC_CHANNEL_5  // GPIO7 - ANALOG_A3
-#define OUR_ADC_CHANNEL_4     ADC_CHANNEL_2  // GPIO5 - ANALOG_A4
-
-#define NUM_ADC_CHANNELS  4
-
-// ADC инициализация и чтение
-void adc_init(void);
-float read_adc_channel_slow(uint8_t channel);
-void update_all_adc_channels_slow(void);
-
-// Быстрые функции через кэш
-float read_adc_channel_fast(uint8_t channel);
-float* get_all_adc_channels_fast(void);
-
-// OPC UA функции ADC
-UA_StatusCode readAdcChannel(UA_Server *server,
-                           const UA_NodeId *sessionId, void *sessionContext,
-                           const UA_NodeId *nodeId, void *nodeContext,
-                           UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
-                           UA_DataValue *dataValue);
-
-void addAdcVariables(UA_Server *server);

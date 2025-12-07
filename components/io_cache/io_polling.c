@@ -7,6 +7,7 @@
 static const char *TAG = "io_polling";
 
 #define POLL_INPUTS_INTERVAL_MS     20
+#define POLL_ADC_INTERVAL_MS        100  // 100 мс для ADC
 
 static uint64_t get_current_time_ms(void) {
     return (uint64_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
@@ -14,12 +15,17 @@ static uint64_t get_current_time_ms(void) {
 
 static void io_polling_task(void *pvParameters) {
     TickType_t xLastInputsTime = xTaskGetTickCount();
+    static TickType_t xLastAdcTime;  // Объявляем как static
+    
+    // Инициализируем после объявления
+    xLastAdcTime = xTaskGetTickCount();
     
     ESP_LOGI(TAG, "IO polling task started (240 MHz)");
     
     while (1) {
         TickType_t xNow = xTaskGetTickCount();
         
+        // Опрос дискретных входов
         if ((xNow - xLastInputsTime) * portTICK_PERIOD_MS >= POLL_INPUTS_INTERVAL_MS) {
             uint16_t inputs = read_discrete_inputs_slow();
             uint64_t timestamp = get_current_time_ms();
@@ -27,7 +33,11 @@ static void io_polling_task(void *pvParameters) {
             xLastInputsTime = xNow;
         }
         
-
+        // Опрос ADC каналов
+        if ((xNow - xLastAdcTime) * portTICK_PERIOD_MS >= POLL_ADC_INTERVAL_MS) {
+            update_all_adc_channels_slow();
+            xLastAdcTime = xNow;
+        }
         
         vTaskDelay(pdMS_TO_TICKS(5));
     }

@@ -1,6 +1,7 @@
 #include "open62541.h"
 #include "model.h"
 #include "driver/gpio.h"
+#include "esp_adc/adc_oneshot.h"
 #include "io_cache.h"
 #include "pcf8574.h"
 #include "esp_log.h"
@@ -222,7 +223,6 @@ void model_init_task(void) {
     // Инициализация дискретных I/O
     discrete_io_init();
     
-    
     ESP_LOGI(TAG, "Model initialized with Discrete I/O");
 }
 
@@ -235,8 +235,6 @@ uint16_t read_discrete_inputs_fast(void) {
 uint16_t read_discrete_outputs_fast(void) {
     return io_cache_get_discrete_outputs(NULL, NULL);
 }
-
-/* УДАЛЕНО: float read_temperature_fast(void) */
 
 /* ===== ДИАГНОСТИЧЕСКИЕ ТЕГИ ДЛЯ ИЗМЕРЕНИЯ ПРОИЗВОДИТЕЛЬНОСТИ ===== */
 
@@ -320,4 +318,161 @@ readLoopbackOutput(UA_Server *server,
     dataValue->hasValue = true;
     dataValue->sourceTimestamp = UA_DateTime_now();
     return UA_STATUSCODE_GOOD;
+}
+
+// =================== ADC FUNCTIONS ===================
+
+static float adc_cache[NUM_ADC_CHANNELS] = {0};
+static adc_oneshot_unit_handle_t adc1_handle = NULL;
+static bool adc_initialized = false;
+static uint64_t adc_timestamps_ms[NUM_ADC_CHANNELS] = {0};
+static uint64_t adc_server_timestamps_ms[NUM_ADC_CHANNELS] = {0};
+
+// Инициализация ADC
+void adc_init(void) {
+    if (adc1_handle != NULL) {
+        return;
+    }
+    
+    // Конфигурация ADC unit
+    adc_oneshot_unit_init_cfg_t init_config = {
+        .unit_id = ADC_UNIT_1,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &adc1_handle));
+    
+    // Конфигурация каналов
+    adc_oneshot_chan_cfg_t config = {
+        .atten = ADC_ATTEN_DB_12,
+        .bitwidth = ADC_BITWIDTH_12,
+    };
+    
+    // Конфигурируем 4 канала
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, OUR_ADC_CHANNEL_1, &config)); // GPIO4
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, OUR_ADC_CHANNEL_2, &config)); // GPIO6  
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, OUR_ADC_CHANNEL_3, &config)); // GPIO7
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, OUR_ADC_CHANNEL_4, &config)); // GPIO5
+    
+    adc_initialized = true;
+    ESP_LOGI(TAG, "ADC initialized with oneshot driver (4 channels)");
+}
+
+// Чтение ADC канала
+float read_adc_channel_slow(uint8_t channel) {
+    if (adc1_handle == NULL || channel >= NUM_ADC_CHANNELS) {
+        return 0.0f;
+    }
+    
+    adc_channel_t channel_id;
+    switch(channel) {
+        case 0: channel_id = OUR_ADC_CHANNEL_1; break;  // GPIO4
+        case 1: channel_id = OUR_ADC_CHANNEL_2; break;  // GPIO6
+        case 2: channel_id = OUR_ADC_CHANNEL_3; break;  // GPIO7
+        case 3: channel_id = OUR_ADC_CHANNEL_4; break;  // GPIO5
+        default: return 0.0f;
+    }
+    
+    int raw = 0;
+    ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, channel_id, &raw));
+    
+    // Конвертация в напряжение (3.3V reference, 12-bit ADC)
+    float voltage = (float)raw * 3.3f / 4095.0f;
+    return voltage;
+}
+
+// Обновление всех каналов ADC
+void update_all_adc_channels_slow(void) {
+    if (adc1_handle == NULL) {
+        adc_init();
+        if (adc1_handle == NULL) {
+            return;
+        }
+    }
+    
+    uint64_t timestamp = (uint64_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+    
+    for (int i = 0; i < NUM_ADC_CHANNELS; i++) {
+        float value = read_adc_channel_slow(i);
+        adc_cache[i] = value;
+        adc_timestamps_ms[i] = timestamp;
+        adc_server_timestamps_ms[i] = timestamp;
+        
+        // Также обновляем глобальный кэш
+        io_cache_update_adc_channel(i, value, timestamp);
+    }
+}
+
+// Быстрое чтение из кэша
+float read_adc_channel_fast(uint8_t channel) {
+    if (channel >= NUM_ADC_CHANNELS) {
+        return 0.0f;
+    }
+    return adc_cache[channel];
+}
+
+// Получение всех значений ADC
+float* get_all_adc_channels_fast(void) {
+    return adc_cache;
+}
+
+// =================== OPC UA FUNCTIONS FOR ADC ===================
+
+UA_StatusCode readAdcChannel(UA_Server *server,
+                           const UA_NodeId *sessionId, void *sessionContext,
+                           const UA_NodeId *nodeId, void *nodeContext,
+                           UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
+                           UA_DataValue *dataValue) {
+    uint8_t channel = (uintptr_t)nodeContext;
+    
+    if (channel >= NUM_ADC_CHANNELS) {
+        return UA_STATUSCODE_BADINTERNALERROR;
+    }
+    
+    float value = adc_cache[channel];
+    UA_Variant_setScalarCopy(&dataValue->value, &value, &UA_TYPES[UA_TYPES_FLOAT]);
+    
+    if (sourceTimeStamp && adc_timestamps_ms[channel] > 0) {
+        dataValue->sourceTimestamp = UA_DateTime_fromUnixTime((UA_Int64)(adc_timestamps_ms[channel] / 1000));
+    }
+    
+    dataValue->hasValue = true;
+    return UA_STATUSCODE_GOOD;
+}
+
+// Добавление ADC переменных в OPC UA сервер
+void addAdcVariables(UA_Server *server) {
+    char* channel_names[] = {"ADC1", "ADC2", "ADC3", "ADC4"};
+    char* descriptions[] = {
+        "Analog Input 1 (GPIO4)",
+        "Analog Input 2 (GPIO6)", 
+        "Analog Input 3 (GPIO7)",
+        "Analog Input 4 (GPIO5)"
+    };
+    
+    for (int i = 0; i < NUM_ADC_CHANNELS; i++) {
+        UA_VariableAttributes attr = UA_VariableAttributes_default;
+        attr.displayName = UA_LOCALIZEDTEXT("en-US", channel_names[i]);
+        attr.description = UA_LOCALIZEDTEXT("en-US", descriptions[i]);
+        attr.dataType = UA_TYPES[UA_TYPES_FLOAT].typeId;
+        attr.accessLevel = UA_ACCESSLEVELMASK_READ;
+        
+        UA_DataSource dataSource;
+        dataSource.read = readAdcChannel;
+        dataSource.write = NULL;
+        
+        char nodeIdStr[32];
+        snprintf(nodeIdStr, sizeof(nodeIdStr), "adc_channel_%d", i + 1);
+        
+        UA_NodeId nodeId = UA_NODEID_STRING(1, nodeIdStr);
+        UA_QualifiedName name = UA_QUALIFIEDNAME(1, channel_names[i]);
+        UA_NodeId parentNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
+        UA_NodeId parentReferenceNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES);
+        UA_NodeId variableTypeNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_BASEDATAVARIABLETYPE);
+        
+        UA_Server_addDataSourceVariableNode(server, nodeId, parentNodeId,
+                                          parentReferenceNodeId, name,
+                                          variableTypeNodeId, attr,
+                                          dataSource, (void*)(uintptr_t)i, NULL);
+    }
+    
+    ESP_LOGI(TAG, "ADC variables added to OPC UA server (%d channels)", NUM_ADC_CHANNELS);
 }
