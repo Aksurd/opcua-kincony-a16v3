@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_sntp.h"
 #include <esp_flash_encrypt.h>
 #include <esp_task_wdt.h>
 #include <esp_sntp.h>

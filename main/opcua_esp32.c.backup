@@ -220,7 +220,7 @@ static void initialize_sntp(void)
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, "pool.ntp.org");
     esp_sntp_setservername(1, "time.google.com");
-    esp_sntp_set_time_sync_notification_cb(time_sync_notification_cb);
+    sntp_set_time_sync_notification_cb(time_sync_notification_cb);
     
     esp_sntp_init();
     esp_sntp_initialized = true;
@@ -241,7 +241,7 @@ static bool obtain_time(void)
     
     ESP_LOGI(SNTP_TAG, "Getting time from NTP...");
     
-    while (esp_sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && ++retry <= retry_count)
+    while (sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && ++retry <= retry_count)
     {
         if (retry % 3 == 0) {
             ESP_LOGW(SNTP_TAG, "Still waiting for NTP... (%d/%d)", retry, retry_count);

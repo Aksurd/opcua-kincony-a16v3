@@ -5315,7 +5315,7 @@ encryptChunkSym(UA_MessageContext *const messageContext, size_t totalLength);
 
 #define UA_LOG_TRACE_CHANNEL_INTERNAL(LOGGER, CHANNEL, MSG, ...)              \
     UA_LOG_TRACE(LOGGER, UA_LOGCATEGORY_SECURECHANNEL,                        \
-                 "Connection %li | SecureChannel %" PRIu32 " | " MSG "%.0s",     \
+                 "Connection %i | SecureChannel %" PRIu32 " | " MSG "%.0s",     \
                  ((CHANNEL)->connection ? (int)((CHANNEL)->connection->sockfd) : 0), \
                  (CHANNEL)->securityToken.channelId, __VA_ARGS__)
 
@@ -5324,7 +5324,7 @@ encryptChunkSym(UA_MessageContext *const messageContext, size_t totalLength);
 
 #define UA_LOG_DEBUG_CHANNEL_INTERNAL(LOGGER, CHANNEL, MSG, ...)              \
     UA_LOG_DEBUG(LOGGER, UA_LOGCATEGORY_SECURECHANNEL,                        \
-                 "Connection %li | SecureChannel %" PRIu32 " | " MSG "%.0s",     \
+                 "Connection %i | SecureChannel %" PRIu32 " | " MSG "%.0s",     \
                  ((CHANNEL)->connection ? (int)((CHANNEL)->connection->sockfd) : 0), \
                  (CHANNEL)->securityToken.channelId, __VA_ARGS__)
 
@@ -5333,7 +5333,7 @@ encryptChunkSym(UA_MessageContext *const messageContext, size_t totalLength);
 
 #define UA_LOG_INFO_CHANNEL_INTERNAL(LOGGER, CHANNEL, MSG, ...)               \
     UA_LOG_INFO(LOGGER, UA_LOGCATEGORY_SECURECHANNEL,                         \
-                 "Connection %li | SecureChannel %" PRIu32 " | " MSG "%.0s",     \
+                 "Connection %i | SecureChannel %" PRIu32 " | " MSG "%.0s",     \
                  ((CHANNEL)->connection ? (int)((CHANNEL)->connection->sockfd) : 0), \
                  (CHANNEL)->securityToken.channelId, __VA_ARGS__)
 
@@ -5342,7 +5342,7 @@ encryptChunkSym(UA_MessageContext *const messageContext, size_t totalLength);
 
 #define UA_LOG_WARNING_CHANNEL_INTERNAL(LOGGER, CHANNEL, MSG, ...)            \
     UA_LOG_WARNING(LOGGER, UA_LOGCATEGORY_SECURECHANNEL,                      \
-                 "Connection %li | SecureChannel %" PRIu32 " | " MSG "%.0s",     \
+                 "Connection %i | SecureChannel %" PRIu32 " | " MSG "%.0s",     \
                  ((CHANNEL)->connection ? (int)((CHANNEL)->connection->sockfd) : 0), \
                  (CHANNEL)->securityToken.channelId, __VA_ARGS__)
 
@@ -5351,7 +5351,7 @@ encryptChunkSym(UA_MessageContext *const messageContext, size_t totalLength);
 
 #define UA_LOG_ERROR_CHANNEL_INTERNAL(LOGGER, CHANNEL, MSG, ...)              \
     UA_LOG_ERROR(LOGGER, UA_LOGCATEGORY_SECURECHANNEL,                        \
-                 "Connection %li | SecureChannel %" PRIu32 " | " MSG "%.0s",     \
+                 "Connection %i | SecureChannel %" PRIu32 " | " MSG "%.0s",     \
                  ((CHANNEL)->connection ? (int)((CHANNEL)->connection->sockfd) : 0), \
                  (CHANNEL)->securityToken.channelId, __VA_ARGS__)
 
@@ -5360,7 +5360,7 @@ encryptChunkSym(UA_MessageContext *const messageContext, size_t totalLength);
 
 #define UA_LOG_FATAL_CHANNEL_INTERNAL(LOGGER, CHANNEL, MSG, ...)              \
     UA_LOG_FATAL(LOGGER, UA_LOGCATEGORY_SECURECHANNEL,                        \
-                 "Connection %li | SecureChannel %" PRIu32 " | " MSG "%.0s",     \
+                 "Connection %i | SecureChannel %" PRIu32 " | " MSG "%.0s",     \
                  ((CHANNEL)->connection ? (CHANNEL)->connection->sockfd : 0), \
                  (CHANNEL)->securityToken.channelId, __VA_ARGS__)
 
@@ -5795,7 +5795,7 @@ UA_Session_dequeuePublishReq(UA_Session *session);
                 (SESSION)->header.channel->securityToken.channelId : 0; \
         }                                                               \
         UA_LOG_##LEVEL(LOGGER, UA_LOGCATEGORY_SESSION,                  \
-                       "SecureChannel %li | Session %.*s | " MSG "%.0s", \
+                       "SecureChannel %i | Session %.*s | " MSG "%.0s", \
                        channelId, (int)idString.length, idString.data, __VA_ARGS__); \
         UA_String_clear(&idString);                                     \
     } while(0)
@@ -6186,7 +6186,7 @@ UA_Server_evaluateWhereClauseContentFilter(
     if((SUB) && (SUB)->session) {                                       \
         UA_NodeId_print(&(SUB)->session->sessionId, &idString);         \
         UA_LOG_##LEVEL(LOGGER, UA_LOGCATEGORY_SESSION,                  \
-                       "SecureChannel %li | Session %.*s | Subscription %" PRIu32 " | " MSG "%.0s", \
+                       "SecureChannel %i | Session %.*s | Subscription %" PRIu32 " | " MSG "%.0s", \
                        ((SUB)->session->header.channel ?                \
                         (SUB)->session->header.channel->securityToken.channelId : 0), \
                        (int)idString.length, idString.data, (SUB)->subscriptionId, __VA_ARGS__); \
@@ -28878,7 +28878,7 @@ processHEL(UA_Server *server, UA_SecureChannel *channel, const UA_ByteString *ms
                                             (UA_TcpAcknowledgeMessage*)&helloMessage);
     if(retval != UA_STATUSCODE_GOOD) {
         UA_LOG_INFO(&server->config.logger, UA_LOGCATEGORY_NETWORK,
-                    "Connection %li | Error during the HEL/ACK handshake",
+                    "Connection %i | Error during the HEL/ACK handshake",
                     (int)(channel->connection->sockfd));
         return retval;
     }
@@ -29359,7 +29359,7 @@ void
 UA_Server_processBinaryMessage(UA_Server *server, UA_Connection *connection,
                                UA_ByteString *message) {
     UA_LOG_TRACE(&server->config.logger, UA_LOGCATEGORY_NETWORK,
-                 "Connection %li | Received a packet.", (int)(connection->sockfd));
+                 "Connection %i | Received a packet.", (int)(connection->sockfd));
 
     UA_TcpErrorMessage error;
     UA_StatusCode retval = UA_STATUSCODE_GOOD;
@@ -29384,7 +29384,7 @@ UA_Server_processBinaryMessage(UA_Server *server, UA_Connection *connection,
     retval = UA_SecureChannel_processBuffer(channel, server, processSecureChannelMessage, message);
     if(retval != UA_STATUSCODE_GOOD) {
         UA_LOG_INFO(&server->config.logger, UA_LOGCATEGORY_NETWORK,
-                    "Connection %li | Processing the message failed with error %s",
+                    "Connection %i | Processing the message failed with error %s",
                     (int)(connection->sockfd), UA_StatusCode_name(retval));
         goto error;
     }
@@ -47930,7 +47930,7 @@ processAsyncResponse(UA_Client *client, UA_UInt32 requestId, const UA_NodeId *re
  process:
     if(retval != UA_STATUSCODE_GOOD) {
         UA_LOG_INFO(&client->config.logger, UA_LOGCATEGORY_CLIENT,
-                    "Could not decode the response with id %lu due to %s",
+                    "Could not decode the response with id %u due to %s",
                     requestId, UA_StatusCode_name(retval));
         response.responseHeader.serviceResult = retval;
     } else if(response.responseHeader.serviceResult != UA_STATUSCODE_GOOD) {
@@ -74713,17 +74713,17 @@ ServerNetworkLayerTCP_add(UA_ServerNetworkLayer *nl, ServerNetworkLayerTCP *laye
                           NULL, 0, NI_NUMERICHOST);
     if(res == 0) {
         UA_LOG_INFO(layer->logger, UA_LOGCATEGORY_NETWORK,
-                    "Connection %li | New connection over TCP from %s",
+                    "Connection %i | New connection over TCP from %s",
                     (int)newsockfd, remote_name);
     } else {
         UA_LOG_SOCKET_ERRNO_WRAP(UA_LOG_WARNING(layer->logger, UA_LOGCATEGORY_NETWORK,
-                                                "Connection %li | New connection over TCP, "
+                                                "Connection %i | New connection over TCP, "
                                                 "getnameinfo failed with error: %s",
                                                 (int)newsockfd, errno_str));
     }
 #else
     UA_LOG_INFO(layer->logger, UA_LOGCATEGORY_NETWORK,
-                "Connection %li | New connection over TCP",
+                "Connection %i | New connection over TCP",
                 (int)newsockfd);
 #endif
     /* Allocate and initialize the connection */
@@ -74991,7 +74991,7 @@ ServerNetworkLayerTCP_listen(UA_ServerNetworkLayer *nl, UA_Server *server,
             continue;
 
         UA_LOG_TRACE(layer->logger, UA_LOGCATEGORY_NETWORK,
-                    "Connection %li | New TCP connection on server socket %i",
+                    "Connection %i | New TCP connection on server socket %i",
                     (int)newsockfd, (int)(layer->serverSockets[i]));
 
         if(ServerNetworkLayerTCP_add(nl, layer, (UA_Int32)newsockfd, &remote) != UA_STATUSCODE_GOOD) {
@@ -75006,7 +75006,7 @@ ServerNetworkLayerTCP_listen(UA_ServerNetworkLayer *nl, UA_Server *server,
         if((e->connection.state == UA_CONNECTIONSTATE_OPENING) &&
             (now > (e->connection.openingDate + (NOHELLOTIMEOUT * UA_DATETIME_MSEC)))) {
             UA_LOG_INFO(layer->logger, UA_LOGCATEGORY_NETWORK,
-                        "Connection %li | Closed by the server (no Hello Message)",
+                        "Connection %i | Closed by the server (no Hello Message)",
                          (int)(e->connection.sockfd));
             LIST_REMOVE(e, pointers);
             layer->connectionsSize--;
@@ -75024,7 +75024,7 @@ ServerNetworkLayerTCP_listen(UA_ServerNetworkLayer *nl, UA_Server *server,
           continue;
 
         UA_LOG_TRACE(layer->logger, UA_LOGCATEGORY_NETWORK,
-                    "Connection %li | Activity on the socket",
+                    "Connection %i | Activity on the socket",
                     (int)(e->connection.sockfd));
 
         UA_ByteString buf = UA_BYTESTRING_NULL;
@@ -75037,7 +75037,7 @@ ServerNetworkLayerTCP_listen(UA_ServerNetworkLayer *nl, UA_Server *server,
         } else if(retval == UA_STATUSCODE_BADCONNECTIONCLOSED) {
             /* The socket is shutdown but not closed */
             UA_LOG_INFO(layer->logger, UA_LOGCATEGORY_NETWORK,
-                        "Connection %li | Closed",
+                        "Connection %i | Closed",
                         (int)(e->connection.sockfd));
             LIST_REMOVE(e, pointers);
             layer->connectionsSize--;
