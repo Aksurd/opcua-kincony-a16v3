@@ -87,12 +87,12 @@ UA_StatusCode readLoopbackOutput(UA_Server *server,
 
 // ADC инициализация и чтение
 void adc_init(void);
-float read_adc_channel_slow(uint8_t channel);
+uint16_t read_adc_channel_slow(uint8_t channel);
 void update_all_adc_channels_slow(void);
 
 // Быстрые функции через кэш
-float read_adc_channel_fast(uint8_t channel);
-float* get_all_adc_channels_fast(void);
+uint16_t read_adc_channel_fast(uint8_t channel);
+uint16_t* get_all_adc_channels_fast(void);
 
 // OPC UA функции ADC
 UA_StatusCode readAdcChannel(UA_Server *server,

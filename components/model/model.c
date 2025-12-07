@@ -322,7 +322,7 @@ readLoopbackOutput(UA_Server *server,
 
 // =================== ADC FUNCTIONS ===================
 
-static float adc_cache[NUM_ADC_CHANNELS] = {0};
+static uint16_t adc_cache[NUM_ADC_CHANNELS] = {0};
 static adc_oneshot_unit_handle_t adc1_handle = NULL;
 static bool adc_initialized = false;
 static uint64_t adc_timestamps_ms[NUM_ADC_CHANNELS] = {0};
@@ -357,9 +357,9 @@ void adc_init(void) {
 }
 
 // Чтение ADC канала
-float read_adc_channel_slow(uint8_t channel) {
+uint16_t read_adc_channel_slow(uint8_t channel) {
     if (adc1_handle == NULL || channel >= NUM_ADC_CHANNELS) {
-        return 0.0f;
+        return 0;
     }
     
     adc_channel_t channel_id;
@@ -368,15 +368,14 @@ float read_adc_channel_slow(uint8_t channel) {
         case 1: channel_id = OUR_ADC_CHANNEL_2; break;  // GPIO6
         case 2: channel_id = OUR_ADC_CHANNEL_3; break;  // GPIO7
         case 3: channel_id = OUR_ADC_CHANNEL_4; break;  // GPIO5
-        default: return 0.0f;
+        default: return 0;
     }
     
     int raw = 0;
     ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, channel_id, &raw));
     
-    // Конвертация в напряжение (3.3V reference, 12-bit ADC)
-    float voltage = (float)raw * 3.3f / 4095.0f;
-    return voltage;
+    // Возвращаем сырое значение (0-4095)
+    return (uint16_t)raw;
 }
 
 // Обновление всех каналов ADC
@@ -391,26 +390,26 @@ void update_all_adc_channels_slow(void) {
     uint64_t timestamp = (uint64_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
     
     for (int i = 0; i < NUM_ADC_CHANNELS; i++) {
-        float value = read_adc_channel_slow(i);
+        uint16_t value = read_adc_channel_slow(i);
         adc_cache[i] = value;
         adc_timestamps_ms[i] = timestamp;
         adc_server_timestamps_ms[i] = timestamp;
         
         // Также обновляем глобальный кэш
-        io_cache_update_adc_channel(i, value, timestamp);
+        io_cache_update_adc_channel(i, (float)value, timestamp);
     }
 }
 
 // Быстрое чтение из кэша
-float read_adc_channel_fast(uint8_t channel) {
+uint16_t read_adc_channel_fast(uint8_t channel) {
     if (channel >= NUM_ADC_CHANNELS) {
-        return 0.0f;
+        return 0;
     }
     return adc_cache[channel];
 }
 
 // Получение всех значений ADC
-float* get_all_adc_channels_fast(void) {
+uint16_t* get_all_adc_channels_fast(void) {
     return adc_cache;
 }
 
@@ -427,8 +426,8 @@ UA_StatusCode readAdcChannel(UA_Server *server,
         return UA_STATUSCODE_BADINTERNALERROR;
     }
     
-    float value = adc_cache[channel];
-    UA_Variant_setScalarCopy(&dataValue->value, &value, &UA_TYPES[UA_TYPES_FLOAT]);
+    uint16_t value = adc_cache[channel];
+    UA_Variant_setScalarCopy(&dataValue->value, &value, &UA_TYPES[UA_TYPES_UINT16]);
     
     if (sourceTimeStamp && adc_timestamps_ms[channel] > 0) {
         dataValue->sourceTimestamp = UA_DateTime_fromUnixTime((UA_Int64)(adc_timestamps_ms[channel] / 1000));
@@ -442,17 +441,17 @@ UA_StatusCode readAdcChannel(UA_Server *server,
 void addAdcVariables(UA_Server *server) {
     char* channel_names[] = {"ADC1", "ADC2", "ADC3", "ADC4"};
     char* descriptions[] = {
-        "Analog Input 1 (GPIO4)",
-        "Analog Input 2 (GPIO6)", 
-        "Analog Input 3 (GPIO7)",
-        "Analog Input 4 (GPIO5)"
+        "Analog Input 1 (GPIO4) - Raw ADC code",
+        "Analog Input 2 (GPIO6) - Raw ADC code", 
+        "Analog Input 3 (GPIO7) - Raw ADC code",
+        "Analog Input 4 (GPIO5) - Raw ADC code"
     };
     
     for (int i = 0; i < NUM_ADC_CHANNELS; i++) {
         UA_VariableAttributes attr = UA_VariableAttributes_default;
         attr.displayName = UA_LOCALIZEDTEXT("en-US", channel_names[i]);
         attr.description = UA_LOCALIZEDTEXT("en-US", descriptions[i]);
-        attr.dataType = UA_TYPES[UA_TYPES_FLOAT].typeId;
+        attr.dataType = UA_TYPES[UA_TYPES_UINT16].typeId;
         attr.accessLevel = UA_ACCESSLEVELMASK_READ;
         
         UA_DataSource dataSource;
@@ -474,5 +473,5 @@ void addAdcVariables(UA_Server *server) {
                                           dataSource, (void*)(uintptr_t)i, NULL);
     }
     
-    ESP_LOGI(TAG, "ADC variables added to OPC UA server (%d channels)", NUM_ADC_CHANNELS);
+    ESP_LOGI(TAG, "ADC variables added to OPC UA server (%d channels, raw codes)", NUM_ADC_CHANNELS);
 }
