@@ -1,9 +1,4 @@
-/* Common functions for protocol examples, to establish Wi-Fi or Ethernet connection.
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
- */
+/* ethernet_connect.c - Based on ESP-IDF examples (Apache-2.0). See project LICENSE and main file. */
 
 #include <string.h>
 #include "sdkconfig.h"
@@ -28,6 +23,18 @@ static const char *TAG = "online_connection";
 static void start(void);
 static void stop(void);
 
+/**
+ * @brief Event handler for IP address acquisition
+ * 
+ * This function is called when the system receives an IP address
+ * from DHCP or static configuration. It stores the IP address
+ * and signals the connection event group.
+ * 
+ * @param arg User-defined argument (not used)
+ * @param event_base Event base identifier
+ * @param event_id Event ID (IP_EVENT_GOT_IP)
+ * @param event_data Pointer to IP event data structure
+ */
 static void on_got_ip(void *arg, esp_event_base_t event_base,
                       int32_t event_id, void *event_data)
 {
@@ -37,6 +44,19 @@ static void on_got_ip(void *arg, esp_event_base_t event_base,
     xEventGroupSetBits(s_connect_event_group, GOT_IPV4_BIT);
 }
 
+/**
+ * @brief Establish network connection (Ethernet or Wi-Fi)
+ * 
+ * This function initializes the network connection based on the
+ * configuration in sdkconfig.h. It can connect via Ethernet or
+ * Wi-Fi depending on the build configuration.
+ * 
+ * @return ESP_OK if connection was successfully established
+ * @return ESP_ERR_INVALID_STATE if already connected
+ * 
+ * @note This function blocks until IP address is obtained
+ * @note Automatically registers shutdown handler for cleanup
+ */
 esp_err_t example_connect(void)
 {
     if (s_connect_event_group != NULL)
@@ -53,6 +73,15 @@ esp_err_t example_connect(void)
     return ESP_OK;
 }
 
+/**
+ * @brief Disconnect from network
+ * 
+ * This function tears down the network connection and cleans up
+ * all allocated resources.
+ * 
+ * @return ESP_OK if successfully disconnected
+ * @return ESP_ERR_INVALID_STATE if not currently connected
+ */
 esp_err_t example_disconnect(void)
 {
     if (s_connect_event_group == NULL)
@@ -73,6 +102,13 @@ static esp_eth_mac_t *s_mac = NULL;
 static esp_eth_phy_t *s_phy = NULL;
 static void *s_eth_glue = NULL;
 
+/**
+ * @brief Start Ethernet connection
+ * 
+ * Initializes Ethernet hardware, configures network interface,
+ * and starts the Ethernet driver. Supports both dynamic DHCP
+ * and static IP configuration.
+ */
 static void start(void)
 {
     esp_netif_config_t cfg = ESP_NETIF_DEFAULT_ETH();
@@ -114,6 +150,12 @@ static void start(void)
     s_connection_name = "ETH";
 }
 
+/**
+ * @brief Stop Ethernet connection
+ * 
+ * Stops Ethernet driver, unregisters event handlers, and cleans up
+ * all allocated resources for Ethernet connection.
+ */
 static void stop(void)
 {
     ESP_ERROR_CHECK(esp_event_handler_unregister(IP_EVENT, IP_EVENT_ETH_GOT_IP, &on_got_ip));
@@ -129,6 +171,16 @@ static void stop(void)
 #endif // CONFIG_EXAMPLE_CONNECT_ETHERNET
 
 #ifdef CONFIG_EXAMPLE_CONNECT_WIFI
+/**
+ * @brief Event handler for Wi-Fi disconnection
+ * 
+ * Automatically attempts to reconnect when Wi-Fi connection is lost.
+ * 
+ * @param arg User-defined argument (not used)
+ * @param event_base Event base identifier
+ * @param event_id Event ID (WIFI_EVENT_STA_DISCONNECTED)
+ * @param event_data Pointer to Wi-Fi event data structure
+ */
 static void on_wifi_disconnect(void *arg, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
 {
@@ -141,6 +193,13 @@ static void on_wifi_disconnect(void *arg, esp_event_base_t event_base,
     ESP_ERROR_CHECK(err);
 }
 
+/**
+ * @brief Start Wi-Fi connection
+ * 
+ * Initializes Wi-Fi station mode, configures network interface,
+ * and connects to the configured Wi-Fi network. Supports both
+ * dynamic DHCP and static IP configuration.
+ */
 static void start(void)
 {
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -192,6 +251,12 @@ static void start(void)
     s_connection_name = CONFIG_WIFI_SSID;
 }
 
+/**
+ * @brief Stop Wi-Fi connection
+ * 
+ * Disconnects from Wi-Fi network, stops Wi-Fi driver, and cleans up
+ * all allocated resources for Wi-Fi connection.
+ */
 static void stop(void)
 {
     ESP_ERROR_CHECK(esp_event_handler_unregister(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &on_wifi_disconnect));
@@ -213,11 +278,29 @@ static void stop(void)
 }
 #endif // CONFIG_EXAMPLE_CONNECT_WIFI
 
+/**
+ * @brief Get the current network interface
+ * 
+ * Returns a pointer to the active network interface (Ethernet or Wi-Fi).
+ * 
+ * @return esp_netif_t* Pointer to the network interface, or NULL if not connected
+ */
 esp_netif_t *get_example_netif(void)
 {
     return s_example_esp_netif;
 }
 
+/**
+ * @brief Configure DNS server for network interface
+ * 
+ * Sets the DNS server address for the specified network interface.
+ * Can be used for both primary and backup DNS servers.
+ * 
+ * @param netif Pointer to network interface
+ * @param addr DNS server IP address in network byte order
+ * @param type DNS server type (MAIN, BACKUP, FALLBACK)
+ * @return ESP_OK if DNS server was configured successfully
+ */
 esp_err_t set_dns_server(esp_netif_t *netif, uint32_t addr, esp_netif_dns_type_t type)
 {
     if (addr && (addr != IPADDR_NONE)) {

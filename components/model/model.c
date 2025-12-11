@@ -1,3 +1,5 @@
+/* model.c - Based on the opcua-esp32 project (MPL-2.0). See project LICENSE and main file. */
+
 #include "open62541.h"
 #include "model.h"
 #include "driver/gpio.h"
@@ -8,20 +10,27 @@
 
 static const char *TAG = "model";
 
+/* ============================================================================
+ * DISCRETE I/O FUNCTIONS
+ * ============================================================================ */
 
-// =================== DISCRETE I/O FUNCTIONS ===================
-
-// Дескрипторы устройств PCF8574
+/** PCF8574 device descriptors */
 static pcf8574_dev_t dio_in1, dio_in2, dio_out1, dio_out2;
 static bool dio_initialized = false;
 
-// Инициализация дискретных I/O
+/**
+ * @brief Initialize discrete I/O hardware
+ * 
+ * This function initializes the PCF8574 I/O expanders for the KC868-A16v3
+ * controller. It configures I2C communication and sets all outputs to a
+ * safe state (off).
+ */
 void discrete_io_init(void) {
     if (dio_initialized) {
         return;
     }
     
-    // Конфигурация I2C
+    // I2C configuration
     pcf8574_config_t i2c_config = {
         .i2c_port = I2C_NUM_0,
         .sda_pin = 9,
@@ -34,23 +43,30 @@ void discrete_io_init(void) {
         return;
     }
     
-    // Инициализация устройств
+    // Initialize devices
     pcf8574_init(&dio_in1, DIO_IN1_ADDR, I2C_NUM_0);
     pcf8574_init(&dio_in2, DIO_IN2_ADDR, I2C_NUM_0);
     pcf8574_init(&dio_out1, DIO_OUT1_ADDR, I2C_NUM_0);
     pcf8574_init(&dio_out2, DIO_OUT2_ADDR, I2C_NUM_0);
     
-    // Инициализация выходов в безопасное состояние (все выключены)
-    pcf8574_write(&dio_out1, 0xFF); // Все биты = 1 (выключено)
+    // Initialize outputs to safe state (all off)
+    pcf8574_write(&dio_out1, 0xFF); // All bits = 1 (off)
     pcf8574_write(&dio_out2, 0xFF);
     
     dio_initialized = true;
     ESP_LOGI(TAG, "Discrete I/O initialized");
 }
 
-// Чтение 16 дискретных входов (медленная функция для обновления кеша)
+/**
+ * @brief Read 16 discrete inputs from hardware (slow function for cache update)
+ * 
+ * This function performs direct hardware read of all 16 discrete input channels.
+ * It uses lazy initialization - hardware is initialized on first call.
+ * 
+ * @return uint16_t Current state of discrete inputs (16 bits)
+ */
 uint16_t read_discrete_inputs_slow(void) {
-    // Ленивая инициализация при первом вызове
+    // Lazy initialization on first call
     if (!dio_initialized) {
         ESP_LOGI(TAG, "First call to discrete I/O - initializing...");
         discrete_io_init();
@@ -63,7 +79,7 @@ uint16_t read_discrete_inputs_slow(void) {
     uint8_t in1 = pcf8574_read(&dio_in1);
     uint8_t in2 = pcf8574_read(&dio_in2);
     
-    // Инвертируем: PCF8574: 0=сигнал есть, 1=нет -> делаем 1=сигнал есть
+    // Invert: PCF8574: 0=signal present, 1=no signal -> make 1=signal present
     in1 = ~in1;
     in2 = ~in2;
     
@@ -72,9 +88,16 @@ uint16_t read_discrete_inputs_slow(void) {
     return inputs;
 }
 
-// Запись 16 дискретных выходов
+/**
+ * @brief Write 16 discrete outputs to hardware
+ * 
+ * This function performs direct hardware write to all 16 discrete output channels.
+ * It uses lazy initialization - hardware is initialized on first call.
+ * 
+ * @param outputs Value to write to outputs (16 bits)
+ */
 void write_discrete_outputs_slow(uint16_t outputs) {
-    // Ленивая инициализация при первом вызове
+    // Lazy initialization on first call
     if (!dio_initialized) {
         ESP_LOGI(TAG, "First call to discrete I/O - initializing...");
         discrete_io_init();
@@ -87,7 +110,7 @@ void write_discrete_outputs_slow(uint16_t outputs) {
     uint8_t out1 = outputs & 0xFF;
     uint8_t out2 = (outputs >> 8) & 0xFF;
     
-    // Инвертируем: 1 в бите = включить выход -> PCF8574: 0=включить
+    // Invert: 1 in bit = turn output on -> PCF8574: 0=turn on
     out1 = ~out1;
     out2 = ~out2;
     
@@ -97,23 +120,40 @@ void write_discrete_outputs_slow(uint16_t outputs) {
     ESP_LOGD(TAG, "Direct write outputs: 0x%04X", outputs);
 }
 
-// =================== OPC UA FUNCTIONS FOR DISCRETE I/O ===================
+/* ============================================================================
+ * OPC UA FUNCTIONS FOR DISCRETE I/O
+ * ============================================================================ */
 
-// Функция чтения дискретных входов для OPC UA (с использованием кеша)
+/**
+ * @brief OPC UA read callback for discrete inputs (uses cache)
+ * 
+ * This function is called when OPC UA clients read the discrete inputs variable.
+ * It retrieves values from the I/O cache instead of accessing hardware directly.
+ * 
+ * @param server OPC UA server instance
+ * @param sessionId Client session ID
+ * @param sessionContext Session context (not used)
+ * @param nodeId Node ID being read
+ * @param nodeContext Node context (not used)
+ * @param sourceTimeStamp Whether to include source timestamp
+ * @param range Data range (not used)
+ * @param dataValue Pointer to store read data
+ * @return UA_StatusCode Status of read operation
+ */
 UA_StatusCode
 readDiscreteInputs(UA_Server *server,
                   const UA_NodeId *sessionId, void *sessionContext,
                   const UA_NodeId *nodeId, void *nodeContext,
                   UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
                   UA_DataValue *dataValue) {
-    // Используем кеш вместо прямого чтения
+    // Use cache instead of direct reading
     uint64_t source_ts = 0, server_ts = 0;
     UA_UInt16 inputs = io_cache_get_discrete_inputs(&source_ts, &server_ts);
     
     UA_Variant_setScalarCopy(&dataValue->value, &inputs,
                            &UA_TYPES[UA_TYPES_UINT16]);
     
-    // Устанавливаем временные метки если запрошено
+    // Set timestamps if requested
     if (sourceTimeStamp && source_ts > 0) {
         dataValue->sourceTimestamp = UA_DateTime_fromUnixTime((UA_Int64)(source_ts / 1000));
     }
@@ -123,21 +163,36 @@ readDiscreteInputs(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
-// Функция чтения дискретных выходов для OPC UA (с использованием кеша)
+/**
+ * @brief OPC UA read callback for discrete outputs (uses cache)
+ * 
+ * This function is called when OPC UA clients read the discrete outputs variable.
+ * It retrieves values from the I/O cache instead of accessing hardware directly.
+ * 
+ * @param server OPC UA server instance
+ * @param sessionId Client session ID
+ * @param sessionContext Session context (not used)
+ * @param nodeId Node ID being read
+ * @param nodeContext Node context (not used)
+ * @param sourceTimeStamp Whether to include source timestamp
+ * @param range Data range (not used)
+ * @param dataValue Pointer to store read data
+ * @return UA_StatusCode Status of read operation
+ */
 UA_StatusCode
 readDiscreteOutputs(UA_Server *server,
                    const UA_NodeId *sessionId, void *sessionContext,
                    const UA_NodeId *nodeId, void *nodeContext,
                    UA_Boolean sourceTimeStamp, const UA_NumericRange *range,
                    UA_DataValue *dataValue) {
-    // Используем кеш вместо прямого чтения
+    // Use cache instead of direct reading
     uint64_t source_ts = 0, server_ts = 0;
     UA_UInt16 outputs = io_cache_get_discrete_outputs(&source_ts, &server_ts);
     
     UA_Variant_setScalarCopy(&dataValue->value, &outputs,
                            &UA_TYPES[UA_TYPES_UINT16]);
     
-    // Устанавливаем временные метки если запрошено
+    // Set timestamps if requested
     if (sourceTimeStamp && source_ts > 0) {
         dataValue->sourceTimestamp = UA_DateTime_fromUnixTime((UA_Int64)(source_ts / 1000));
     }
@@ -147,7 +202,21 @@ readDiscreteOutputs(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
-// Функция записи дискретных выходов для OPC UA (обновляем кеш и физическое устройство)
+/**
+ * @brief OPC UA write callback for discrete outputs
+ * 
+ * This function is called when OPC UA clients write to the discrete outputs variable.
+ * It updates both the hardware and the cache.
+ * 
+ * @param server OPC UA server instance
+ * @param sessionId Client session ID
+ * @param sessionContext Session context (not used)
+ * @param nodeId Node ID being written
+ * @param nodeContext Node context (not used)
+ * @param range Data range (not used)
+ * @param data Data value to write
+ * @return UA_StatusCode Status of write operation
+ */
 UA_StatusCode
 writeDiscreteOutputs(UA_Server *server,
                     const UA_NodeId *sessionId, void *sessionContext,
@@ -157,10 +226,10 @@ writeDiscreteOutputs(UA_Server *server,
         data->value.type == &UA_TYPES[UA_TYPES_UINT16]) {
         UA_UInt16 outputs = *(UA_UInt16*)data->value.data;
         
-        // 1. Обновляем физическое устройство (медленно)
+        // 1. Update physical device (slow)
         write_discrete_outputs_slow((uint16_t)outputs);
         
-        // 2. Обновляем кеш с текущей временной меткой
+        // 2. Update cache with current timestamp
         uint64_t timestamp_ms = (uint64_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
         io_cache_update_discrete_outputs((uint16_t)outputs, timestamp_ms);
         
@@ -170,10 +239,18 @@ writeDiscreteOutputs(UA_Server *server,
     return UA_STATUSCODE_BADTYPEMISMATCH;
 }
 
-// Добавление переменных дискретных I/O в OPC UA сервер
+/**
+ * @brief Add discrete I/O variables to OPC UA server
+ * 
+ * Creates OPC UA nodes for discrete inputs and outputs in the server
+ * address space. The input variable is read-only, while the output
+ * variable supports both read and write operations.
+ * 
+ * @param server OPC UA server instance
+ */
 void
 addDiscreteIOVariables(UA_Server *server) {
-    // 1. Переменная для ЧТЕНИЯ входов (только чтение)
+    // 1. Variable for reading inputs (read-only)
     UA_VariableAttributes inputAttr = UA_VariableAttributes_default;
     inputAttr.displayName = UA_LOCALIZEDTEXT("en-US", "Discrete Inputs");
     inputAttr.description = UA_LOCALIZEDTEXT("en-US", "16 discrete inputs with caching");
@@ -195,7 +272,7 @@ addDiscreteIOVariables(UA_Server *server) {
                                         variableTypeNodeId, inputAttr,
                                         inputDataSource, NULL, NULL);
     
-    // 2. Переменная для ВЫХОДОВ (чтение/запись)
+    // 2. Variable for outputs (read/write)
     UA_VariableAttributes outputAttr = UA_VariableAttributes_default;
     outputAttr.displayName = UA_LOCALIZEDTEXT("en-US", "Discrete Outputs");
     outputAttr.description = UA_LOCALIZEDTEXT("en-US", "16 discrete outputs with caching");
@@ -217,51 +294,108 @@ addDiscreteIOVariables(UA_Server *server) {
     ESP_LOGI(TAG, "Discrete I/O variables added to OPC UA server (with caching)");
 }
 
-// =================== MAIN INIT FUNCTION ===================
+/* ============================================================================
+ * MAIN INIT FUNCTION
+ * ============================================================================ */
 
+/**
+ * @brief Model initialization task
+ * 
+ * This function initializes all model hardware components including
+ * discrete I/O. It should be called during system startup.
+ */
 void model_init_task(void) {
-    // Инициализация дискретных I/O
+    // Initialize discrete I/O
     discrete_io_init();
     
     ESP_LOGI(TAG, "Model initialized with Discrete I/O");
 }
 
-/* ===== ПРОСТЫЕ БЫСТРЫЕ ФУНКЦИИ ===== */
+/* ============================================================================
+ * SIMPLE FAST FUNCTIONS (cache-based)
+ * ============================================================================ */
 
+/**
+ * @brief Read discrete inputs from cache (fast)
+ * 
+ * @return uint16_t Cached discrete input value
+ */
 uint16_t read_discrete_inputs_fast(void) {
     return io_cache_get_discrete_inputs(NULL, NULL);
 }
 
+/**
+ * @brief Read discrete outputs from cache (fast)
+ * 
+ * @return uint16_t Cached discrete output value
+ */
 uint16_t read_discrete_outputs_fast(void) {
     return io_cache_get_discrete_outputs(NULL, NULL);
 }
 
-/* ===== ДИАГНОСТИЧЕСКИЕ ТЕГИ ДЛЯ ИЗМЕРЕНИЯ ПРОИЗВОДИТЕЛЬНОСТИ ===== */
+/* ============================================================================
+ * DIAGNOSTIC TAGS FOR PERFORMANCE MEASUREMENT
+ * ============================================================================ */
 
 static uint16_t diagnostic_counter = 0;
 static uint16_t loopback_input = 0;
 static uint16_t loopback_output = 0;
 
+/**
+ * @brief Get diagnostic counter value
+ * 
+ * @return uint16_t Diagnostic counter value (increments on each call)
+ */
 uint16_t get_diagnostic_counter(void) {
     diagnostic_counter++;
     return diagnostic_counter;
 }
 
+/**
+ * @brief Get loopback input value
+ * 
+ * @return uint16_t Current loopback input value
+ */
 uint16_t get_loopback_input(void) {
     return loopback_input;
 }
 
+/**
+ * @brief Set loopback input value
+ * 
+ * @param val Value to set for loopback
+ */
 void set_loopback_input(uint16_t val) {
     loopback_input = val;
-    loopback_output = val;  /* Мгновенный loopback */
+    loopback_output = val;  /* Instant loopback */
 }
 
+/**
+ * @brief Get loopback output value
+ * 
+ * @return uint16_t Current loopback output value
+ */
 uint16_t get_loopback_output(void) {
     return loopback_output;
 }
 
-/* ===== OPC UA CALLBACKS ДЛЯ ДИАГНОСТИЧЕСКИХ ТЕГОВ ===== */
+/* ============================================================================
+ * OPC UA CALLBACKS FOR DIAGNOSTIC TAGS
+ * ============================================================================ */
 
+/**
+ * @brief OPC UA read callback for diagnostic counter
+ * 
+ * @param server OPC UA server instance
+ * @param sessionId Client session ID
+ * @param sessionContext Session context (not used)
+ * @param nodeId Node ID being read
+ * @param nodeContext Node context (not used)
+ * @param sourceTimeStamp Whether to include source timestamp
+ * @param range Data range (not used)
+ * @param dataValue Pointer to store read data
+ * @return UA_StatusCode Status of read operation
+ */
 UA_StatusCode
 readDiagnosticCounter(UA_Server *server,
                      const UA_NodeId *sessionId, void *sessionContext,
@@ -277,6 +411,19 @@ readDiagnosticCounter(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
+/**
+ * @brief OPC UA read callback for loopback input
+ * 
+ * @param server OPC UA server instance
+ * @param sessionId Client session ID
+ * @param sessionContext Session context (not used)
+ * @param nodeId Node ID being read
+ * @param nodeContext Node context (not used)
+ * @param sourceTimeStamp Whether to include source timestamp
+ * @param range Data range (not used)
+ * @param dataValue Pointer to store read data
+ * @return UA_StatusCode Status of read operation
+ */
 UA_StatusCode
 readLoopbackInput(UA_Server *server,
                   const UA_NodeId *sessionId, void *sessionContext,
@@ -291,6 +438,18 @@ readLoopbackInput(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
+/**
+ * @brief OPC UA write callback for loopback input
+ * 
+ * @param server OPC UA server instance
+ * @param sessionId Client session ID
+ * @param sessionContext Session context (not used)
+ * @param nodeId Node ID being written
+ * @param nodeContext Node context (not used)
+ * @param range Data range (not used)
+ * @param data Data value to write
+ * @return UA_StatusCode Status of write operation
+ */
 UA_StatusCode
 writeLoopbackInput(UA_Server *server,
                    const UA_NodeId *sessionId, void *sessionContext,
@@ -300,12 +459,25 @@ writeLoopbackInput(UA_Server *server,
         data->value.type == &UA_TYPES[UA_TYPES_UINT16]) {
         UA_UInt16 value = *(UA_UInt16*)data->value.data;
         loopback_input = (uint16_t)value;
-        loopback_output = (uint16_t)value;  /* Мгновенный loopback */
+        loopback_output = (uint16_t)value;  /* Instant loopback */
         return UA_STATUSCODE_GOOD;
     }
     return UA_STATUSCODE_BADTYPEMISMATCH;
 }
 
+/**
+ * @brief OPC UA read callback for loopback output
+ * 
+ * @param server OPC UA server instance
+ * @param sessionId Client session ID
+ * @param sessionContext Session context (not used)
+ * @param nodeId Node ID being read
+ * @param nodeContext Node context (not used)
+ * @param sourceTimeStamp Whether to include source timestamp
+ * @param range Data range (not used)
+ * @param dataValue Pointer to store read data
+ * @return UA_StatusCode Status of read operation
+ */
 UA_StatusCode
 readLoopbackOutput(UA_Server *server,
                    const UA_NodeId *sessionId, void *sessionContext,
@@ -320,7 +492,9 @@ readLoopbackOutput(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
-// =================== ADC FUNCTIONS ===================
+/* ============================================================================
+ * ADC FUNCTIONS
+ * ============================================================================ */
 
 static uint16_t adc_cache[NUM_ADC_CHANNELS] = {0};
 static adc_oneshot_unit_handle_t adc1_handle = NULL;
@@ -328,25 +502,30 @@ static bool adc_initialized = false;
 static uint64_t adc_timestamps_ms[NUM_ADC_CHANNELS] = {0};
 static uint64_t adc_server_timestamps_ms[NUM_ADC_CHANNELS] = {0};
 
-// Инициализация ADC
+/**
+ * @brief Initialize ADC hardware
+ * 
+ * Configures the ESP32 ADC unit and 4 analog input channels for
+ * the KC868-A16v3 controller.
+ */
 void adc_init(void) {
     if (adc1_handle != NULL) {
         return;
     }
     
-    // Конфигурация ADC unit
+    // ADC unit configuration
     adc_oneshot_unit_init_cfg_t init_config = {
         .unit_id = ADC_UNIT_1,
     };
     ESP_ERROR_CHECK(adc_oneshot_new_unit(&init_config, &adc1_handle));
     
-    // Конфигурация каналов
+    // Channel configuration
     adc_oneshot_chan_cfg_t config = {
         .atten = ADC_ATTEN_DB_12,
         .bitwidth = ADC_BITWIDTH_12,
     };
     
-    // Конфигурируем 4 канала
+    // Configure 4 channels
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, OUR_ADC_CHANNEL_1, &config)); // GPIO4
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, OUR_ADC_CHANNEL_2, &config)); // GPIO6  
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, OUR_ADC_CHANNEL_3, &config)); // GPIO7
@@ -356,7 +535,14 @@ void adc_init(void) {
     ESP_LOGI(TAG, "ADC initialized with oneshot driver (4 channels)");
 }
 
-// Чтение ADC канала
+/**
+ * @brief Read ADC channel from hardware (slow)
+ * 
+ * Performs direct hardware read of a specific ADC channel.
+ * 
+ * @param channel ADC channel number (0-3)
+ * @return uint16_t Raw ADC value (0-4095)
+ */
 uint16_t read_adc_channel_slow(uint8_t channel) {
     if (adc1_handle == NULL || channel >= NUM_ADC_CHANNELS) {
         return 0;
@@ -374,11 +560,16 @@ uint16_t read_adc_channel_slow(uint8_t channel) {
     int raw = 0;
     ESP_ERROR_CHECK(adc_oneshot_read(adc1_handle, channel_id, &raw));
     
-    // Возвращаем сырое значение (0-4095)
+    // Return raw value (0-4095)
     return (uint16_t)raw;
 }
 
-// Обновление всех каналов ADC
+/**
+ * @brief Update all ADC channels from hardware
+ * 
+ * Reads all ADC channels, updates the local cache and the global I/O cache.
+ * Used by the polling task to refresh ADC values.
+ */
 void update_all_adc_channels_slow(void) {
     if (adc1_handle == NULL) {
         adc_init();
@@ -395,12 +586,17 @@ void update_all_adc_channels_slow(void) {
         adc_timestamps_ms[i] = timestamp;
         adc_server_timestamps_ms[i] = timestamp;
         
-        // Также обновляем глобальный кэш
+        // Also update global cache
         io_cache_update_adc_channel(i, (float)value, timestamp);
     }
 }
 
-// Быстрое чтение из кэша
+/**
+ * @brief Read ADC channel from cache (fast)
+ * 
+ * @param channel ADC channel number (0-3)
+ * @return uint16_t Cached ADC value
+ */
 uint16_t read_adc_channel_fast(uint8_t channel) {
     if (channel >= NUM_ADC_CHANNELS) {
         return 0;
@@ -408,13 +604,35 @@ uint16_t read_adc_channel_fast(uint8_t channel) {
     return adc_cache[channel];
 }
 
-// Получение всех значений ADC
+/**
+ * @brief Get pointer to all ADC channel values
+ * 
+ * @return uint16_t* Pointer to ADC values array
+ */
 uint16_t* get_all_adc_channels_fast(void) {
     return adc_cache;
 }
 
-// =================== OPC UA FUNCTIONS FOR ADC ===================
+/* ============================================================================
+ * OPC UA FUNCTIONS FOR ADC
+ * ============================================================================ */
 
+/**
+ * @brief OPC UA read callback for ADC channel
+ * 
+ * Called when OPC UA clients read an ADC channel variable.
+ * Returns cached ADC values with timestamp information.
+ * 
+ * @param server OPC UA server instance
+ * @param sessionId Client session ID
+ * @param sessionContext Session context (not used)
+ * @param nodeId Node ID being read
+ * @param nodeContext Channel number stored as pointer
+ * @param sourceTimeStamp Whether to include source timestamp
+ * @param range Data range (not used)
+ * @param dataValue Pointer to store read data
+ * @return UA_StatusCode Status of read operation
+ */
 UA_StatusCode readAdcChannel(UA_Server *server,
                            const UA_NodeId *sessionId, void *sessionContext,
                            const UA_NodeId *nodeId, void *nodeContext,
@@ -437,7 +655,14 @@ UA_StatusCode readAdcChannel(UA_Server *server,
     return UA_STATUSCODE_GOOD;
 }
 
-// Добавление ADC переменных в OPC UA сервер
+/**
+ * @brief Add ADC variables to OPC UA server
+ * 
+ * Creates OPC UA nodes for all 4 ADC channels in the server address space.
+ * Each channel is represented as a separate read-only variable.
+ * 
+ * @param server OPC UA server instance
+ */
 void addAdcVariables(UA_Server *server) {
     char* channel_names[] = {"ADC1", "ADC2", "ADC3", "ADC4"};
     char* descriptions[] = {

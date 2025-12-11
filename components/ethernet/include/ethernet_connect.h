@@ -1,9 +1,4 @@
-/* Common functions for protocol examples, to establish Wi-Fi or Ethernet connection.
-   This example code is in the Public Domain (or CC0 licensed, at your option.)
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
- */
+/* ethernet_connect.h - Based on ESP-IDF examples (Apache-2.0). See project LICENSE and main file. */
 
 #pragma once
 
@@ -52,9 +47,52 @@ extern "C" {
 #define EXAMPLE_INTERFACE TCPIP_ADAPTER_IF_STA
 #endif
 
+/**
+ * @brief Establish network connection (Ethernet or Wi-Fi)
+ * 
+ * This function initializes the network connection based on the
+ * configuration in sdkconfig.h. It can connect via Ethernet or
+ * Wi-Fi depending on the build configuration.
+ * 
+ * @return ESP_OK if connection was successfully established
+ * @return ESP_ERR_INVALID_STATE if already connected
+ * 
+ * @note This function blocks until IP address is obtained
+ * @note Automatically registers shutdown handler for cleanup
+ */
 esp_err_t example_connect(void);
+
+/**
+ * @brief Disconnect from network
+ * 
+ * This function tears down the network connection and cleans up
+ * all allocated resources.
+ * 
+ * @return ESP_OK if successfully disconnected
+ * @return ESP_ERR_INVALID_STATE if not currently connected
+ */
 esp_err_t example_disconnect(void);
+
+/**
+ * @brief Get the current network interface
+ * 
+ * Returns a pointer to the active network interface (Ethernet or Wi-Fi).
+ * 
+ * @return esp_netif_t* Pointer to the network interface, or NULL if not connected
+ */
 esp_netif_t *get_example_netif(void);
+
+/**
+ * @brief Configure DNS server for network interface
+ * 
+ * Sets the DNS server address for the specified network interface.
+ * Can be used for both primary and backup DNS servers.
+ * 
+ * @param netif Pointer to network interface
+ * @param addr DNS server IP address in network byte order
+ * @param type DNS server type (MAIN, BACKUP, FALLBACK)
+ * @return ESP_OK if DNS server was configured successfully
+ */
 esp_err_t set_dns_server(esp_netif_t *netif, uint32_t addr, esp_netif_dns_type_t type);
 
 #ifdef __cplusplus
