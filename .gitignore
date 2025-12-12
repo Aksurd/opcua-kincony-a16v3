@@ -1,15 +1,83 @@
-# Build directories
-build/
-main/build/
+# ===========================================
+# OPC UA Server for Kincony A16V3 - .gitignore
+# ===========================================
 
-# IDE files
+# ---------- Build Outputs ----------
+build/
+*.bin
+*.elf
+*.map
+*.lst
+*.sym
+
+# ---------- ESP-IDF Specific ----------
+sdkconfig.old
+sdkconfig.defaults.old
+*.pyc
+__pycache__/
+
+# ---------- Object Files ----------
+*.o
+*.d
+*.su
+*.i
+*.s
+
+# ---------- IDE & Editors ----------
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+*.code-workspace
+
+# ---------- Eclipse ----------
 .cproject
 .project
-*.geany
+.settings/
 
-# SDK config backups
-sdkconfig.old
-
-# Old/backup files
+# ---------- Backup Files ----------
+*.backup
+*.orig
+*.rej
 *_old.c
 *_old.h
+*_backup.*
+
+# ---------- CMake ----------
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+*.cmake
+CMakeUserPresets.json
+
+# ---------- Ninja ----------
+build.ninja
+.ninja_deps
+.ninja_log
+
+# ---------- Temporary Files ----------
+/tmp/
+*.tmp
+*.temp
+
+# ---------- Logs ----------
+*.log
+log/
+logs/
+
+# ---------- Test Builds ----------
+TestOPCUAclient/test_counter8  # compiled test binary
+
+# ---------- Но оставляем эти! ----------
+!components/**/*
+!main/**/*
+!TestOPCUAclient/**/*.c
+!TestOPCUAclient/**/*.h
+!README*.md
+!LICENSE.md
+!CMakeLists.txt
+!Makefile
+sdkconfig

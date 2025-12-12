@@ -1,3 +1,5 @@
+/* pcf8574.c - Original work (MIT). See project LICENSE and main file for details. */
+
 #include "pcf8574.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -8,7 +10,17 @@ static const char *TAG = "PCF8574";
 static bool i2c_initialized = false;
 static i2c_port_t current_i2c_port = I2C_NUM_0;
 
-// Инициализация шины I2C
+/**
+ * @brief Initialize the I2C bus for PCF8574 communication.
+ * 
+ * This function configures and installs the I2C driver according to the provided
+ * configuration. It ensures that initialization happens only once per I2C port.
+ * 
+ * @param config Pointer to the pcf8574_config_t structure containing I2C parameters
+ *               (port, SDA pin, SCL pin, clock speed).
+ * @return true if I2C initialization succeeded or was already initialized.
+ * @return false if configuration is invalid or I2C driver installation fails.
+ */
 bool pcf8574_i2c_init(const pcf8574_config_t *config) {
     if (config == NULL) {
         ESP_LOGE(TAG, "Config is NULL");
@@ -16,7 +28,7 @@ bool pcf8574_i2c_init(const pcf8574_config_t *config) {
     }
     
     if (i2c_initialized && current_i2c_port == config->i2c_port) {
-        return true; // Уже инициализирован
+        return true; // Already initialized
     }
     
     i2c_config_t i2c_conf = {
@@ -48,7 +60,16 @@ bool pcf8574_i2c_init(const pcf8574_config_t *config) {
     return true;
 }
 
-// Инициализация устройства PCF8574
+/**
+ * @brief Initialize a PCF8574 device structure.
+ * 
+ * This function initializes the device descriptor with the provided I2C address
+ * and port number. It does not perform any communication with the device.
+ * 
+ * @param dev Pointer to the pcf8574_dev_t structure to initialize.
+ * @param address I2C address of the PCF8574 device (7-bit format).
+ * @param i2c_port I2C port number to use for communication.
+ */
 void pcf8574_init(pcf8574_dev_t *dev, uint8_t address, i2c_port_t i2c_port) {
     if (dev == NULL) {
         ESP_LOGE(TAG, "Device descriptor is NULL");
@@ -62,7 +83,15 @@ void pcf8574_init(pcf8574_dev_t *dev, uint8_t address, i2c_port_t i2c_port) {
              address, i2c_port);
 }
 
-// Чтение байта с PCF8574
+/**
+ * @brief Read a byte from the PCF8574 device.
+ * 
+ * Performs a single-byte read operation from the PCF8574. The PCF8574 has
+ * quasi-bidirectional I/O ports, so reading returns the actual pin states.
+ * 
+ * @param dev Pointer to the initialized PCF8574 device structure.
+ * @return uint8_t The byte read from the device (0xFF on error).
+ */
 uint8_t pcf8574_read(const pcf8574_dev_t *dev) {
     if (dev == NULL) {
         ESP_LOGE(TAG, "Device descriptor is NULL");
@@ -88,7 +117,17 @@ uint8_t pcf8574_read(const pcf8574_dev_t *dev) {
     return data;
 }
 
-// Запись байта в PCF8574
+/**
+ * @brief Write a byte to the PCF8574 device.
+ * 
+ * Performs a single-byte write operation to the PCF8574. Each bit corresponds
+ * to an output pin state (1 = high, 0 = low).
+ * 
+ * @param dev Pointer to the initialized PCF8574 device structure.
+ * @param data Byte to write to the device.
+ * @return true if write operation succeeded.
+ * @return false if device is NULL or I2C communication failed.
+ */
 bool pcf8574_write(const pcf8574_dev_t *dev, uint8_t data) {
     if (dev == NULL) {
         ESP_LOGE(TAG, "Device descriptor is NULL");
@@ -113,31 +152,54 @@ bool pcf8574_write(const pcf8574_dev_t *dev, uint8_t data) {
     return true;
 }
 
-// Установка бита выхода
+/**
+ * @brief Set a specific output bit on the PCF8574.
+ * 
+ * This function reads the current state of the PCF8574, modifies only the
+ * specified bit, and writes the new byte back. Useful for controlling
+ * individual output pins without affecting others.
+ * 
+ * @param dev Pointer to the initialized PCF8574 device structure.
+ * @param bit Bit position to set (0-7).
+ * @param value true to set the bit (high), false to clear it (low).
+ * @return true if operation succeeded.
+ * @return false if parameters are invalid or communication failed.
+ */
 bool pcf8574_set_bit(const pcf8574_dev_t *dev, uint8_t bit, bool value) {
     if (dev == NULL || bit > 7) {
         ESP_LOGE(TAG, "Invalid parameters");
         return false;
     }
     
-    // Сначала читаем текущее состояние
+    // First read the current state
     uint8_t current = pcf8574_read(dev);
     if (current == 0xFF) {
-        return false; // Ошибка чтения
+        return false; // Read error
     }
     
-    // Модифицируем нужный бит
+    // Modify the specified bit
     if (value) {
-        current |= (1 << bit);   // Установить бит
+        current |= (1 << bit);   // Set bit
     } else {
-        current &= ~(1 << bit);  // Сбросить бит
+        current &= ~(1 << bit);  // Clear bit
     }
     
-    // Записываем обратно
+    // Write back
     return pcf8574_write(dev, current);
 }
 
-// Чтение бита входа
+/**
+ * @brief Read a specific input bit from the PCF8574.
+ * 
+ * This function reads the entire byte from the PCF8574 and extracts
+ * the state of the specified bit. Useful for reading individual
+ * input pins.
+ * 
+ * @param dev Pointer to the initialized PCF8574 device structure.
+ * @param bit Bit position to read (0-7).
+ * @return true if the bit is set (high).
+ * @return false if the bit is clear (low) or parameters are invalid.
+ */
 bool pcf8574_get_bit(const pcf8574_dev_t *dev, uint8_t bit) {
     if (dev == NULL || bit > 7) {
         ESP_LOGE(TAG, "Invalid parameters");
@@ -146,7 +208,7 @@ bool pcf8574_get_bit(const pcf8574_dev_t *dev, uint8_t bit) {
     
     uint8_t data = pcf8574_read(dev);
     if (data == 0xFF) {
-        return false; // Ошибка чтения
+        return false; // Read error
     }
     
     return (data >> bit) & 0x01;
